@@ -24,6 +24,12 @@ jobs:
     - name: Build plugin
       run: cargo build --target wasm32-wasip1 -p test-plugin --release
 
+    - name: Optimize Wasm
+      uses: NiklasEi/wasm-opt-action@v2
+      with:
+        file: target/wasm32-wasip1/release/*.wasm
+        optimize_all: true
+
     - run: cargo build
     - run: cargo test
     - run: cargo bench
@@ -41,6 +47,12 @@ jobs:
 
     - name: Build plugin
       run: cargo build --target wasm32-wasip1 -p test-plugin --release
+
+    - name: Optimize Wasm
+      uses: NiklasEi/wasm-opt-action@v2
+      with:
+        file: target/wasm32-wasip1/release/*.wasm
+        optimize_all: true
 
     - name: Setup Node.js
       uses: actions/setup-node@v4
