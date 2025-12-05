@@ -24,11 +24,9 @@ jobs:
     - name: Build plugin
       run: cargo build --target wasm32-wasip1 -p test-plugin --release
 
-    - name: Build
-      run: cargo build
-
-    - name: Run tests
-      run: cargo test
+    - run: cargo build
+    - run: cargo test
+    - run: cargo bench
 
   test-wasm:
     runs-on: ubuntu-latest
@@ -51,5 +49,6 @@ jobs:
 
     - uses: jetli/wasm-bindgen-action@v0.2.0
 
-    - name: Run WASM Tests
-      run: cargo test -p wasmi-hdk --target wasm32-unknown-unknown
+    - run: cargo build
+    - run: cargo test
+    - run: cargo bench
