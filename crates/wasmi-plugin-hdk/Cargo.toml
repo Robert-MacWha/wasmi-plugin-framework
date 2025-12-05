@@ -1,0 +1,31 @@
+[package]
+name = "wasmi-plugin-hdk"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+futures = { workspace = true }
+getrandom = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+wasmi = { workspace = true }
+wasmi-plugin-pdk = { workspace = true }
+wasmi-plugin-rt = { workspace = true }
+web-time = { workspace = true }
+
+[dev-dependencies]
+tokio = { version = "1.0", features = ["rt", "macros", "time"] }
+tracing-test = { version = "0.2.5", features = ["no-env-filter"] }
+wasm-bindgen-futures = "0.4"
+wasm-bindgen-test = "0.3"
+
+# Disables criterion for wasm targets since it's not compatible
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+criterion = "0.8.0"
+
+[[bench]]
+name = "benchmark"
+harness = false
