@@ -8,3 +8,6 @@ rand = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 wasmi-plugin-pdk = { workspace = true }
+
+[profile.release]
+lto = true
