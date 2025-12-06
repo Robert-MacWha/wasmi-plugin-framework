@@ -1,5 +1,5 @@
 use std::{
-    io::{Read, Write},
+    io::{BufRead, Read, Write},
     time::Duration,
 };
 use tracing::{error, info, trace, warn};
@@ -17,14 +17,18 @@ use wasmi_plugin_rt::web_time::{Instant, SystemTime};
 pub struct WasiCtx {
     args: Vec<String>,
     env: Vec<String>,
-    stdin_reader: Option<Box<dyn Read + Send + Sync>>,
+    stdin_reader: Option<Box<dyn BufRead + Send + Sync>>,
     stdout_writer: Option<Box<dyn Write + Send + Sync>>,
     stderr_writer: Option<Box<dyn Write + Send + Sync>>,
 
     // Time when the host should resume the guest from an out-of-fuel yield.
     // If None, the guest should be started immediately. If Some, the guest
     // should be resumed after this time is reached.
-    pub resume_time: Option<Instant>,
+    pub sleep_until: Option<Instant>,
+
+    /// Whether the Wasi instance is current paused waiting for stdin. If true,
+    /// the host may choose to wait for stdin to be ready before resuming execution.
+    pub awaiting_stdin: bool,
 }
 
 #[repr(i32)]
@@ -54,7 +58,8 @@ impl WasiCtx {
             stdin_reader: None,
             stdout_writer: None,
             stderr_writer: None,
-            resume_time: None,
+            sleep_until: None,
+            awaiting_stdin: false,
         }
     }
 
@@ -71,6 +76,7 @@ impl WasiCtx {
     }
 
     pub fn set_stdin<R: Read + Send + Sync + 'static>(mut self, reader: R) -> Self {
+        let reader = std::io::BufReader::new(reader);
         self.stdin_reader = Some(Box::new(reader));
         self
     }
@@ -83,6 +89,18 @@ impl WasiCtx {
     pub fn set_stderr<W: Write + Send + Sync + 'static>(mut self, writer: W) -> Self {
         self.stderr_writer = Some(Box::new(writer));
         self
+    }
+
+    /// Returns true if there is data available to read from stdin.
+    pub fn stdin_available(&mut self) -> bool {
+        let Some(reader) = &mut self.stdin_reader else {
+            return false;
+        };
+
+        match reader.fill_buf() {
+            Ok(buf) => !buf.is_empty(),
+            Err(_) => false,
+        }
     }
 }
 
@@ -275,9 +293,7 @@ fn fd_read(
                     Ok(n) => n,
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                         trace!("fd_read: WouldBlock, yielding to host");
-                        // TODO: Consider setting an early-return check.
-                        // I notice we're polling this *a lot* while waiting for the host to
-                        // respond, and I can't imagine that's efficient.
+                        ctx.awaiting_stdin = true;
                         let _ = sched_yield(caller);
                         return Errno::Again as i32;
                     }
@@ -642,9 +658,7 @@ fn poll_oneoff(
     let (earliest_userdata, _earliest_clock_id, earliest_deadline_ns, _) =
         clock_subscriptions.iter().min_by_key(|sub| sub.2).unwrap();
 
-    // Jank Time:
-    //
-    // Basically, poll_oneoff MUST block from the guest's perspective until 1+
+    // poll_oneoff MUST block from the guest's perspective until 1+
     // events are ready. If we try to return immediately with no events (either)
     // via an Errno::Again or Errno::Success with 0 events, the guest will panic.
     //
@@ -652,16 +666,13 @@ fn poll_oneoff(
     // and we don't want to block the entire executor thread since we're in a single-
     // threaded-context. SO instead we instantly return a successful result for the
     // earliest timer, and if the deadline hasn't been reached yet we set the fuel
-    // to zero to yield execution back to the host. The host can then notice that
-    // `resume_time` is Some(time in the future) and will that time before
-    // resuming execution of the guest.
-    //
-    // TODO: Fix this mess
+    // to zero to yield execution back to the host. The host then waits until the
+    // deadline is reached before resuming execution.
 
     //? Future deadline trap
     if earliest_deadline_ns > &now_ns {
         let wait_duration = Duration::from_nanos(earliest_deadline_ns - now_ns);
-        caller.data_mut().resume_time = Some(Instant::now() + wait_duration);
+        caller.data_mut().sleep_until = Some(Instant::now() + wait_duration);
         info!(
             "poll_oneoff: waiting for {:?} before resuming guest",
             wait_duration
