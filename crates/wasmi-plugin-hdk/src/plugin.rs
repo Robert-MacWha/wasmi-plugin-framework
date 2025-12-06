@@ -23,9 +23,15 @@ use crate::{
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct PluginId(Uuid);
 
+impl Default for PluginId {
+    fn default() -> Self {
+        PluginId(Uuid::new_v4())
+    }
+}
+
 impl PluginId {
     pub fn new() -> Self {
-        PluginId(Uuid::new_v4())
+        Self::default()
     }
 }
 
@@ -47,6 +53,8 @@ impl Display for PluginId {
     }
 }
 
+type Logger = Box<dyn Fn(&str, &str) + Send + Sync>;
+
 /// Plugin is an async-capable instance of a plugin
 pub struct Plugin {
     name: String,
@@ -54,7 +62,7 @@ pub struct Plugin {
     handler: Arc<dyn HostHandler>,
     engine: Engine,
     module: Module,
-    logger: Box<dyn Fn(&str, &str) + Send + Sync>,
+    logger: Logger,
     max_fuel: Option<u64>,
 }
 
@@ -97,10 +105,7 @@ impl Plugin {
     /// Sets a custom logger for the plugin instance. Plugins log messages to
     /// stderr, which are captured and passed to this logger function. If
     /// no logger is provided a default logger is used.
-    pub fn with_logger<F>(mut self, logger: F) -> Self
-    where
-        F: Fn(&str, &str) + Send + Sync + 'static,
-    {
+    pub fn with_logger(mut self, logger: Logger) -> Self {
         self.logger = Box::new(logger);
         self
     }
@@ -125,7 +130,7 @@ impl Plugin {
     }
 
     pub fn id(&self) -> PluginId {
-        self.id.clone()
+        self.id
     }
 }
 
@@ -167,7 +172,7 @@ impl Transport<PluginError> for Plugin {
 
         let handler = PluginCallback {
             handler: self.handler.clone(),
-            uuid: self.id.clone(),
+            uuid: self.id,
         };
 
         let buf_reader = BufReader::new(stdout_reader);
@@ -195,11 +200,7 @@ struct PluginCallback {
 impl RequestHandler<RpcError> for PluginCallback {
     fn handle<'a>(&'a self, method: &str, params: Value) -> BoxFuture<'a, Result<Value, RpcError>> {
         let method = method.to_string();
-        Box::pin(async move {
-            self.handler
-                .handle(self.uuid.clone(), &method, params)
-                .await
-        })
+        Box::pin(async move { self.handler.handle(self.uuid, &method, params).await })
     }
 }
 

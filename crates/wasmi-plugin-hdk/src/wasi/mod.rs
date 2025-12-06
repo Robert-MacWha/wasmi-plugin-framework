@@ -1,3 +1,3 @@
 pub mod non_blocking_pipe;
-pub mod wasi;
+pub mod wasi_ctx;
 pub mod wasmi;

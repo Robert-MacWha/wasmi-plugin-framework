@@ -90,11 +90,17 @@ impl RequestHandler<RpcError> for PluginServer {
     }
 }
 
-impl<S: Send + Sync + Clone + 'static> Router<S> {
-    pub fn new() -> Router<S> {
+impl<S: Send + Sync + Clone + 'static> Default for Router<S> {
+    fn default() -> Self {
         Router {
             handlers: HashMap::new(),
         }
+    }
+}
+
+impl<S: Send + Sync + Clone + 'static> Router<S> {
+    pub fn new() -> Router<S> {
+        Self::default()
     }
 
     /// Register a new RPC method with the router. The method is identified by the

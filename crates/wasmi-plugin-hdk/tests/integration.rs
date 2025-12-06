@@ -50,8 +50,7 @@ async fn test_get_random_number() {
     let response = plugin.call("get_random_number", Value::Null).await.unwrap();
 
     info!("Random number response: {:?}", response);
-    let number = response.result.as_u64().unwrap();
-    assert!(number <= u64::MAX);
+    response.result.as_u64().unwrap();
 }
 
 #[cfg_attr(target_family = "wasm", wasm_bindgen_test)]

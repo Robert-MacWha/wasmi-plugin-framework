@@ -597,9 +597,7 @@ fn poll_oneoff(
         // - flags: u16 (subclockflags) at offset 40
 
         let mut sub_bytes = [0u8; 48];
-        memory
-            .read(&caller, sub_offset as usize, &mut sub_bytes)
-            .unwrap();
+        memory.read(&caller, sub_offset, &mut sub_bytes).unwrap();
 
         let userdata = u64::from_le_bytes(sub_bytes[0..8].try_into().unwrap());
         let sub_type = sub_bytes[8];
