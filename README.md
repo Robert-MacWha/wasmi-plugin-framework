@@ -17,6 +17,12 @@ A plugin framework built on the [Wasmi](https://github.com/wasmi-labs/wasmi) Web
 -   No multi-threading support for guests (wasi-wasip1 limitation)
 -   No filesystem or network access access for guests
 
+**Why not WIT / the Component Model?**
+
+The wasm component model is an enhancement for wasm designed to provide clear interopability. While it provides excellent interopability, it has a few limitations which make it suboptimal for my use cases:
+-   Backwards compatibility: The component model uses WIT interfaces for interopability. With WIT, changing a function's signature is a breaking change and will become incompatible with previous versions of the interface. Thus, any time you want to change the host's interface, for example adding a new optional parameter to a function or type, you must version the entire interface.
+-   Simplicity: The component model and WIT add a lot of complexity. For simple use cases, where WASI is being implemented anyways, using a protocol like JSON-RPC over stdio is much simpler and easier to setup.
+
 ### wasm32-wasip1 Support
 
 The Wasmi Plugin Framework intentionally targets a subset of the `wasm32-wasip1` spec to maximize compatibility across platforms. Because of this, some wasi syscalls are either not implemented or have limited functionality.
