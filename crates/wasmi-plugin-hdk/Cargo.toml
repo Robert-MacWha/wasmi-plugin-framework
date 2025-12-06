@@ -2,7 +2,7 @@
 name = "wasmi-plugin-hdk"
 version.workspace = true
 rust-version.workspace = true
-description = "Wasmi-Plugin-Framework Host Development Kit"
+description = "Host development kit for the wasmi WebAssembly Interpreter"
 authors.workspace = true
 repository.workspace = true
 edition.workspace = true

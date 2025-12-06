@@ -2,7 +2,7 @@
 name = "wasmi-plugin-pdk"
 version.workspace = true
 rust-version.workspace = true
-description = "Wasmi-Plugin-Framework Plugin Development Kit"
+description = "Plugin development kit for the wasmi WebAssembly Interpreter"
 authors.workspace = true
 repository.workspace = true
 edition.workspace = true

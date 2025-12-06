@@ -2,7 +2,7 @@
 name = "wasmi-plugin-rt"
 version.workspace = true
 rust-version.workspace = true
-description = "Wasmi-Plugin-Framework runtime utilities"
+description = "Runtime utilities for wasmi-plugin-framework"
 authors.workspace = true
 repository.workspace = true
 edition.workspace = true
