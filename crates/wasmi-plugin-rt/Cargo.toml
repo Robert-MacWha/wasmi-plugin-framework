@@ -11,7 +11,6 @@ license.workspace = true
 keywords.workspace = true
 categories.workspace = true
 exclude.workspace = true
-publish = false
 
 [dependencies]
 web-time = { workspace = true }

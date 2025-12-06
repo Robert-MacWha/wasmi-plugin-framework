@@ -27,10 +27,10 @@ wasmi-plugin-rt = { workspace = true }
 web-time = { workspace = true }
 
 [dev-dependencies]
+dhat = "0.3"
 tokio = { workspace = true }
 tracing-test = { version = "0.2.5", features = ["no-env-filter"] }
 wasm-bindgen-test = "0.3"
-dhat = "0.3"
 
 # Disables criterion for wasm targets since it's not compatible
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
