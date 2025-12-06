@@ -28,4 +28,4 @@ wasmi-plugin-rt = { path = "./crates/wasmi-plugin-rt" }
 web-time = "1"
 
 [patch.crates-io]
-wasmi = { path = "../wasmi/crates/wasmi" }
+wasmi = { git = "https://github.com/Robert-MacWha/wasmi", branch = "memory-leak-patch" }

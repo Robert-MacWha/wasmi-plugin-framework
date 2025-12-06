@@ -1230,6 +1230,7 @@ dependencies = [
 [[package]]
 name = "wasmi"
 version = "1.0.1"
+source = "git+https://github.com/Robert-MacWha/wasmi?branch=memory-leak-patch#59d31d1794403a8581d6c908e06f2316c968db79"
 dependencies = [
  "spin",
  "wasmi_collections",
@@ -1289,6 +1290,7 @@ dependencies = [
 [[package]]
 name = "wasmi_collections"
 version = "1.0.1"
+source = "git+https://github.com/Robert-MacWha/wasmi?branch=memory-leak-patch#59d31d1794403a8581d6c908e06f2316c968db79"
 dependencies = [
  "string-interner",
 ]
@@ -1296,6 +1298,7 @@ dependencies = [
 [[package]]
 name = "wasmi_core"
 version = "1.0.1"
+source = "git+https://github.com/Robert-MacWha/wasmi?branch=memory-leak-patch#59d31d1794403a8581d6c908e06f2316c968db79"
 dependencies = [
  "libm",
 ]
@@ -1303,6 +1306,7 @@ dependencies = [
 [[package]]
 name = "wasmi_ir"
 version = "1.0.1"
+source = "git+https://github.com/Robert-MacWha/wasmi?branch=memory-leak-patch#59d31d1794403a8581d6c908e06f2316c968db79"
 dependencies = [
  "wasmi_core",
 ]
