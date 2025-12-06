@@ -8,9 +8,6 @@ use web_time::{Instant, SystemTime};
 #[cfg(target_family = "wasm")]
 use wasm_bindgen_test::*;
 
-#[cfg(not(target_family = "wasm"))]
-use tracing_test::traced_test;
-
 const PLUGIN_WASM: &[u8] = include_bytes!("../../../target/wasm32-wasip1/release/test-plugin.wasm");
 
 fn load_plugin_wasm() -> Vec<u8> {
@@ -31,7 +28,6 @@ fn get_host_server() -> HostServer<()> {
 
 #[cfg_attr(target_family = "wasm", wasm_bindgen_test)]
 #[cfg_attr(not(target_family = "wasm"), tokio::test)]
-#[cfg_attr(not(target_family = "wasm"), traced_test)]
 async fn test_plugin() {
     info!("Starting test_plugin...");
 
@@ -44,7 +40,6 @@ async fn test_plugin() {
 
 #[cfg_attr(target_family = "wasm", wasm_bindgen_test)]
 #[cfg_attr(not(target_family = "wasm"), tokio::test)]
-#[cfg_attr(not(target_family = "wasm"), traced_test)]
 async fn test_get_random_number() {
     info!("Starting get_random_number test...");
 
@@ -61,7 +56,6 @@ async fn test_get_random_number() {
 
 #[cfg_attr(target_family = "wasm", wasm_bindgen_test)]
 #[cfg_attr(not(target_family = "wasm"), tokio::test)]
-#[cfg_attr(not(target_family = "wasm"), traced_test)]
 async fn test_get_time() {
     info!("Starting get_time test...");
 
@@ -85,7 +79,6 @@ async fn test_get_time() {
 
 #[cfg_attr(target_family = "wasm", wasm_bindgen_test)]
 #[cfg_attr(not(target_family = "wasm"), tokio::test)]
-#[cfg_attr(not(target_family = "wasm"), traced_test)]
 async fn test_sleep() {
     info!("Starting sleep test...");
 
@@ -111,7 +104,6 @@ async fn test_sleep() {
 
 #[cfg_attr(target_family = "wasm", wasm_bindgen_test)]
 #[cfg_attr(not(target_family = "wasm"), tokio::test)]
-#[cfg_attr(not(target_family = "wasm"), traced_test)]
 async fn test_many_echo() {
     info!("Starting many echo test...");
 
@@ -127,7 +119,6 @@ async fn test_many_echo() {
 
 #[cfg_attr(target_family = "wasm", wasm_bindgen_test)]
 #[cfg_attr(not(target_family = "wasm"), tokio::test)]
-#[cfg_attr(not(target_family = "wasm"), traced_test)]
 async fn test_prime_sieve() {
     info!("Starting prime sieve test...");
 

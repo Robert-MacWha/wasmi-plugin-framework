@@ -1,7 +1,4 @@
-use std::{
-    io::{Read, Write},
-    sync::{Arc, atomic::AtomicBool},
-};
+use std::sync::{Arc, atomic::AtomicBool};
 
 use crate::wasi::{
     non_blocking_pipe::{NonBlockingPipeReader, NonBlockingPipeWriter, non_blocking_pipe},
@@ -23,14 +20,15 @@ pub enum SpawnError {
 
 /// Creates the plugin pipes and task.
 pub fn spawn_plugin(
-    engine: Engine,
-    module: Module,
+    engine: &Engine,
+    module: &Module,
     max_fuel: Option<u64>,
 ) -> Result<
     (
         NonBlockingPipeWriter,
         NonBlockingPipeReader,
         NonBlockingPipeReader,
+        Arc<AtomicBool>,
         impl Future<Output = ()>,
     ),
     SpawnError,
@@ -42,33 +40,6 @@ pub fn spawn_plugin(
     let (stdout_reader, stdout_writer) = non_blocking_pipe();
     let (stderr_reader, stderr_writer) = non_blocking_pipe();
 
-    let fut = start_plugin(
-        engine,
-        module,
-        is_running.clone(),
-        stdin_reader,
-        stdout_writer,
-        stderr_writer,
-        max_fuel,
-    )?;
-
-    Ok((stdin_writer, stdout_reader, stderr_reader, fut))
-}
-
-fn start_plugin<R, W1, W2>(
-    engine: Engine,
-    module: Module,
-    is_running: Arc<AtomicBool>,
-    stdin_reader: R,
-    stdout_writer: W1,
-    stderr_writer: W2,
-    max_fuel: Option<u64>,
-) -> Result<impl Future<Output = ()>, SpawnError>
-where
-    R: Read + Send + Sync + 'static,
-    W1: Write + Send + Sync + 'static,
-    W2: Write + Send + Sync + 'static,
-{
     let mut linker = Linker::new(&engine);
     let wasi = WasiCtx::new()
         .set_stdin(stdin_reader)
@@ -85,5 +56,5 @@ where
 
     let fut = spawn_wasm(store, start_func, is_running.clone(), max_fuel);
 
-    Ok(fut)
+    Ok((stdin_writer, stdout_reader, stderr_reader, is_running, fut))
 }

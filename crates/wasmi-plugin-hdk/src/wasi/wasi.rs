@@ -499,7 +499,7 @@ fn random_get(mut caller: wasmi::Caller<'_, WasiCtx>, buf_ptr: i32, buf_len: i32
         .expect("guest must have memory");
 
     let mut buf = vec![0u8; buf_len as usize];
-    if let Err(e) = getrandom::fill(&mut buf) {
+    if let Err(e) = getrandom::getrandom(&mut buf) {
         eprintln!("random_get failed: {:?}", e);
         return Errno::Io as i32;
     }

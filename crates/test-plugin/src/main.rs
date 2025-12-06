@@ -1,11 +1,11 @@
 use rand::Rng;
 use serde_json::{self, Value};
 use std::{io::stderr, sync::Arc};
+use tracing::{error, info, level_filters::LevelFilter};
+use tracing_subscriber::fmt;
 use wasmi_plugin_pdk::{
     rpc_message::RpcError,
     server::PluginServer,
-    tracing::{error, info, level_filters::LevelFilter, trace},
-    tracing_subscriber::fmt,
     transport::{JsonRpcTransport, Transport},
 };
 
@@ -92,7 +92,7 @@ fn main() {
         .with_ansi(false)
         .without_time()
         .init();
-    trace!("Starting plugin...");
+    info!("Starting plugin...");
 
     PluginServer::new_with_transport()
         .with_method("ping", ping)

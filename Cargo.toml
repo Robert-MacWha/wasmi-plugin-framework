@@ -11,7 +11,7 @@ resolver = "2"
 [workspace.dependencies]
 async-trait = "0.1"
 futures = "0.3"
-getrandom = { version = "0.3", features = ["wasm_js"] }
+getrandom = { version = "0.2", features = ["js"] }
 gloo-timers = { version = "0.3", features = ["futures"] }
 rand = "0.9"
 serde = { version = "1", features = ["derive"] }
@@ -22,7 +22,10 @@ tracing = "0.1"
 tracing-subscriber = "0.3"
 uuid = { version = "1", features = [ "v4", "serde", "js" ] } 
 wasm-bindgen-futures = "0.4"
-wasmi = "1"
+wasmi = "=0.50"
 wasmi-plugin-pdk = { path = "./crates/wasmi-plugin-pdk" }
 wasmi-plugin-rt = { path = "./crates/wasmi-plugin-rt" }
 web-time = "1"
+
+[patch.crates-io]
+# wasmi = { git = "https://github.com/Robert-MacWha/wasmi", branch = "memory-leak-patch" }

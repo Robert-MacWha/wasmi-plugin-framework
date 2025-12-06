@@ -1,5 +1,6 @@
 use std::{fmt::Display, io::BufReader, sync::Arc};
 
+use async_trait::async_trait;
 use futures::{AsyncBufReadExt, FutureExt};
 use serde_json::Value;
 use thiserror::Error;
@@ -8,7 +9,6 @@ use uuid::Uuid;
 use wasmi::{Engine, Module};
 use wasmi_plugin_pdk::{
     api::RequestHandler,
-    async_trait::async_trait,
     rpc_message::{RpcError, RpcResponse},
     server::BoxFuture,
     transport::{JsonRpcTransport, Transport},
@@ -133,7 +133,7 @@ impl PluginError {
     pub fn as_rpc_code(&self) -> RpcError {
         match self {
             PluginError::RpcError(code) => code.clone(),
-            _ => RpcError::InternalError,
+            _ => RpcError::Custom(self.to_string()),
         }
     }
 }
@@ -142,7 +142,7 @@ impl From<PluginError> for RpcError {
     fn from(err: PluginError) -> Self {
         match err {
             PluginError::RpcError(code) => code,
-            _ => RpcError::InternalError,
+            _ => RpcError::Custom(err.to_string()),
         }
     }
 }
@@ -151,8 +151,8 @@ impl From<PluginError> for RpcError {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl Transport<PluginError> for Plugin {
     async fn call(&self, method: &str, params: Value) -> Result<RpcResponse, PluginError> {
-        let (stdin_writer, stdout_reader, stderr_reader, instance_task) =
-            spawn_plugin(self.engine.clone(), self.module.clone(), self.max_fuel)?;
+        let (stdin_writer, stdout_reader, stderr_reader, is_running, instance_task) =
+            spawn_plugin(&self.engine, &self.module, self.max_fuel)?;
 
         let name = self.name.clone();
         let stderr_task = async move {
@@ -169,11 +169,9 @@ impl Transport<PluginError> for Plugin {
             handler: self.handler.clone(),
             uuid: self.id.clone(),
         };
-        let handler = Arc::new(handler);
 
         let buf_reader = BufReader::new(stdout_reader);
-        let transport =
-            JsonRpcTransport::with_handler(Box::new(buf_reader), Box::new(stdin_writer), handler);
+        let transport = JsonRpcTransport::with_handler(buf_reader, stdin_writer, handler);
         let rpc_task = transport.call(method, params).fuse();
 
         let instance_task = instance_task.fuse();
@@ -181,8 +179,10 @@ impl Transport<PluginError> for Plugin {
 
         //? Run the transport, plugin, and stderr logger until one of them completes
         let (res, _, _) = futures::join!(rpc_task, instance_task, stderr_task);
-
         let res = res?;
+
+        is_running.store(false, std::sync::atomic::Ordering::SeqCst);
+
         Ok(res)
     }
 }
@@ -193,12 +193,13 @@ struct PluginCallback {
 }
 
 impl RequestHandler<RpcError> for PluginCallback {
-    fn handle<'a>(
-        &'a self,
-        method: &'a str,
-        params: Value,
-    ) -> BoxFuture<'a, Result<Value, RpcError>> {
-        Box::pin(async move { self.handler.handle(self.uuid.clone(), method, params).await })
+    fn handle<'a>(&'a self, method: &str, params: Value) -> BoxFuture<'a, Result<Value, RpcError>> {
+        let method = method.to_string();
+        Box::pin(async move {
+            self.handler
+                .handle(self.uuid.clone(), &method, params)
+                .await
+        })
     }
 }
 

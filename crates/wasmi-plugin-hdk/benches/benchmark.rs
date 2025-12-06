@@ -24,7 +24,7 @@ pub fn bench_ping(c: &mut Criterion) {
 
     let wasm_bytes = load_plugin_wasm();
     let handler = Arc::new(get_host_server());
-    let plugin = Plugin::new("test_plugin", wasm_bytes.clone(), handler).unwrap();
+    let plugin = Plugin::new("test_plugin", wasm_bytes.clone(), handler.clone()).unwrap();
 
     c.bench_function("ping", |b| {
         b.iter(|| {
