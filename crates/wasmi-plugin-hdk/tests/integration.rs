@@ -136,32 +136,3 @@ async fn test_prime_sieve() {
     let count = response.result["count"].as_u64().unwrap();
     assert_eq!(count, 168);
 }
-
-#[global_allocator]
-static ALLOC: dhat::Alloc = dhat::Alloc;
-
-#[test]
-fn test_memory_growth() {
-    let _profiler = dhat::Profiler::new_heap();
-
-    let wasm_bytes = load_plugin_wasm();
-    let handler = Arc::new(get_host_server());
-
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-
-    let plugin = Plugin::new("test", wasm_bytes.clone(), handler.clone()).unwrap();
-
-    eprintln!("Starting test...");
-    for i in 0..10000 {
-        rt.block_on(async {
-            plugin.call("ping", serde_json::Value::Null).await.unwrap();
-        });
-
-        if i % 100 == 0 {
-            eprintln!("Iteration {}", i);
-        }
-    }
-}

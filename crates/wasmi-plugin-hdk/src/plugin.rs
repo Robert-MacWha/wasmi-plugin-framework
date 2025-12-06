@@ -56,8 +56,6 @@ pub struct Plugin {
     module: Module,
     logger: Box<dyn Fn(&str, &str) + Send + Sync>,
     max_fuel: Option<u64>,
-
-    wasm_bytes: Vec<u8>,
 }
 
 #[derive(Debug, Error)]
@@ -86,8 +84,6 @@ impl Plugin {
             module,
             max_fuel: None,
             logger: Box::new(default_plugin_logger),
-
-            wasm_bytes,
         })
     }
 
