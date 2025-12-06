@@ -76,5 +76,8 @@ jobs:
 
     - uses: Swatinem/rust-cache@v2
 
+    - name: Build plugin
+      run: cargo build --target wasm32-wasip1 -p test-plugin --release
+
     - name: Run Clippy
       run: cargo clippy --workspace --all-targets -- -D warnings
