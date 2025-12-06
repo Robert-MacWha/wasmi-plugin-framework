@@ -11,7 +11,7 @@ resolver = "2"
 [workspace.dependencies]
 async-trait = "0.1"
 futures = "0.3"
-getrandom = { version = "0.3", features = ["wasm_js"] }
+getrandom = { version = "0.2", features = ["js"] }
 gloo-timers = { version = "0.3", features = ["futures"] }
 rand = "0.9"
 serde = { version = "1", features = ["derive"] }
