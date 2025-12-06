@@ -22,7 +22,7 @@ tracing = "0.1"
 tracing-subscriber = "0.3"
 uuid = { version = "1", features = [ "v4", "serde", "js" ] } 
 wasm-bindgen-futures = "0.4"
-wasmi = "=0.50"
+wasmi = "1.0"
 wasmi-plugin-pdk = { path = "./crates/wasmi-plugin-pdk" }
 wasmi-plugin-rt = { path = "./crates/wasmi-plugin-rt" }
 web-time = "1"
