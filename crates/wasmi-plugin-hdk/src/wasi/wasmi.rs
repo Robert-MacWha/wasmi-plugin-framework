@@ -84,13 +84,8 @@ async fn run_wasm(
                 let top_up = required.max(max_fuel);
                 store.set_fuel(top_up).unwrap();
 
-                // Jank Time:
-                //
-                // Continuation from `wasmi_wasi::poll_oneoff` that sets
-                // a resume time in the future if the guest requested,
-                // here we actually need to wait until that time before
-                // resuming the guest.
-                if let Some(resume_time) = store.data().resume_time {
+                // Handle any sleep requests
+                if let Some(resume_time) = store.data().sleep_until {
                     let now = now();
                     if resume_time > now {
                         trace!(
@@ -100,9 +95,17 @@ async fn run_wasm(
                         let dur = resume_time - now;
                         sleep(dur).await;
                     }
-                    store.data_mut().resume_time = None;
+                    store.data_mut().sleep_until = None;
                 }
 
+                // Handle any stdin wait requests, avoids busy waiting
+                if store.data().awaiting_stdin && !store.data_mut().stdin_available() {
+                    trace!("Plugin is paused waiting for stdin, yielding...");
+                    yield_now().await;
+                    store.data_mut().awaiting_stdin = false;
+                }
+
+                // Courtesy yield to other tasks
                 trace!("Plugin out of fuel, yielding...");
                 yield_now().await;
 
