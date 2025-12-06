@@ -179,7 +179,7 @@ impl Transport<PluginError> for Plugin {
         let rpc_task = transport.call(method, params).fuse();
 
         let instance_task = instance_task.fuse();
-        // futures::pin_mut!(rpc_task, instance_task, stderr_task);
+        futures::pin_mut!(rpc_task, instance_task, stderr_task);
 
         //? Run the transport, plugin, and stderr logger until one of them completes
         let (res, _, _) = futures::join!(rpc_task, instance_task, stderr_task);
