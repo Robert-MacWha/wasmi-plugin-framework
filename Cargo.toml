@@ -26,3 +26,6 @@ wasmi = "1"
 wasmi-plugin-pdk = { path = "./crates/wasmi-plugin-pdk" }
 wasmi-plugin-rt = { path = "./crates/wasmi-plugin-rt" }
 web-time = "1"
+
+[patch.crates-io]
+wasmi = { path = "../wasmi/crates/wasmi" }

@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     io::{BufRead, Write},
-    sync::{Arc, atomic::AtomicU64},
+    sync::atomic::AtomicU64,
 };
 
 use async_trait::async_trait;
@@ -25,16 +25,12 @@ pub trait Transport<E: ApiError> {
 }
 
 /// Single-threaded, concurrent-safe json-rpc transport layer
-///
-/// Use RefCells instead of having mutable functions since it lets
-/// us run `call` from multiple different instances of the transport
-/// at the same time, very helpful within the plugins.
 pub struct JsonRpcTransport {
     id: AtomicU64,
     pending: Mutex<HashMap<u64, Sender<RpcResponse>>>,
     reader: Mutex<Box<dyn BufRead + Send + Sync>>,
     writer: Mutex<Box<dyn Write + Send + Sync>>,
-    handler: Option<Arc<dyn RequestHandler<RpcError>>>,
+    handler: Option<Box<dyn RequestHandler<RpcError>>>,
 }
 
 const JSON_RPC_VERSION: &str = "2.0";
@@ -54,16 +50,16 @@ impl JsonRpcTransport {
     }
 
     pub fn with_handler(
-        reader: Box<dyn BufRead + Send + Sync>,
-        writer: Box<dyn Write + Send + Sync>,
-        handler: Arc<dyn RequestHandler<RpcError>>,
+        reader: impl BufRead + Send + Sync + 'static,
+        writer: impl Write + Send + Sync + 'static,
+        handler: impl RequestHandler<RpcError> + 'static,
     ) -> Self {
         Self {
             id: AtomicU64::new(0),
             pending: Mutex::new(HashMap::new()),
-            reader: Mutex::new(reader),
-            writer: Mutex::new(writer),
-            handler: Some(handler),
+            reader: Mutex::new(Box::new(reader)),
+            writer: Mutex::new(Box::new(writer)),
+            handler: Some(Box::new(handler)),
         }
     }
 }
@@ -93,7 +89,7 @@ impl Transport<RpcError> for JsonRpcTransport {
                 }
             }
 
-            self.process_next_line(self.handler.clone()).await?;
+            self.process_next_line(self.handler.as_deref()).await?;
         }
     }
 }
@@ -103,7 +99,7 @@ impl JsonRpcTransport {
     /// pump the reader with a custom handler.
     pub async fn process_next_line(
         &self,
-        handler: Option<Arc<dyn RequestHandler<RpcError>>>,
+        handler: Option<&dyn RequestHandler<RpcError>>,
     ) -> Result<(), RpcError> {
         let line: String = self.next_line().await?;
         let message = match serde_json::from_str::<RpcMessage>(line.trim()) {
@@ -153,7 +149,7 @@ impl JsonRpcTransport {
     async fn process_message(
         &self,
         message: RpcMessage,
-        handler: Option<Arc<dyn RequestHandler<RpcError>>>,
+        handler: Option<&dyn RequestHandler<RpcError>>,
     ) -> Result<(), RpcError> {
         match message.clone() {
             RpcMessage::RpcResponse(resp) => {
@@ -231,7 +227,10 @@ impl JsonRpcTransport {
 mod test {
     use super::*;
     use futures::executor::block_on;
-    use std::io::{BufReader, Cursor};
+    use std::{
+        io::{BufReader, Cursor},
+        sync::Arc,
+    };
 
     struct MockWriter {
         buffer: Arc<Mutex<Vec<u8>>>,

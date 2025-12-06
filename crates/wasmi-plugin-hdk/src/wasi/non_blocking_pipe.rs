@@ -91,6 +91,7 @@ impl AsyncRead for NonBlockingPipeReader {
             Poll::Ready(Ok(bytes_read))
         } else if inner.closed {
             // EOF
+            inner.waker = None;
             Poll::Ready(Ok(0))
         } else {
             // No data available, register waker and return pending
@@ -120,6 +121,7 @@ impl Drop for NonBlockingPipeWriter {
         let mut inner = self.inner.lock().unwrap();
         info!("Pipe writer dropped, closing pipe");
         inner.closed = true;
+        inner.waker = None;
         if let Some(waker) = inner.waker.take() {
             waker.wake();
         }

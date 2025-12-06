@@ -23,18 +23,17 @@ pub trait MaybeSend: Send {}
 #[cfg(not(target_arch = "wasm32"))]
 impl<T: Send> MaybeSend for T {}
 
-type HandlerFn<S> =
-    Arc<dyn Send + Sync + Fn(Arc<S>, Value) -> BoxFuture<'static, Result<Value, RpcError>>>;
+type HandlerFn<S> = dyn Send + Sync + Fn(S, Value) -> BoxFuture<'static, Result<Value, RpcError>>;
 
 /// Server is a RPC server that can handle requests by dispatching them to registered
 /// handler functions. It stores a shared state `S` that is passed into each handler.
 pub struct PluginServer {
     transport: Arc<JsonRpcTransport>,
-    router: Router<JsonRpcTransport>,
+    router: Router<Arc<JsonRpcTransport>>,
 }
 
 pub struct Router<S> {
-    handlers: HashMap<String, HandlerFn<S>>,
+    handlers: HashMap<String, Box<HandlerFn<S>>>,
 }
 
 impl PluginServer {
@@ -69,14 +68,13 @@ impl PluginServer {
     }
 
     pub fn run(self) {
-        let server = Arc::new(self);
-        let transport = server.transport.clone();
+        let transport = self.transport.clone();
 
         let rt = Builder::new_current_thread().enable_time().build().unwrap();
         let local = tokio::task::LocalSet::new();
 
         rt.block_on(local.run_until(async move {
-            let _ = transport.process_next_line(Some(server)).await;
+            let _ = transport.process_next_line(Some(&self)).await;
         }));
     }
 }
@@ -92,7 +90,7 @@ impl RequestHandler<RpcError> for PluginServer {
     }
 }
 
-impl<S: Send + Sync + 'static> Router<S> {
+impl<S: Send + Sync + Clone + 'static> Router<S> {
     pub fn new() -> Router<S> {
         Router {
             handlers: HashMap::new(),
@@ -103,18 +101,18 @@ impl<S: Send + Sync + 'static> Router<S> {
     /// given name, and the handler function should accept the shared state and
     /// deserialized params.
     ///
-    /// Handlers should implement: `async fn handler(state: Arc<S>, params: P) -> Result<R, RpcError>`
+    /// Handlers should implement: `async fn handler(state: S, params: P) -> Result<R, RpcError>`
     pub fn with_method<P, R, F, Fut>(mut self, name: &str, func: F) -> Self
     where
         P: DeserializeOwned + 'static,
         R: Serialize + 'static,
-        F: Fn(Arc<S>, P) -> Fut + Send + Sync + 'static,
+        F: Fn(S, P) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<R, RpcError>> + MaybeSend + 'static,
     {
         // Handler function that parses json params, calls the provided func,
         // and serializes the result back to json.
-        let f = Arc::new(
-            move |state: Arc<S>, params: Value| -> BoxFuture<'static, Result<Value, RpcError>> {
+        let f = Box::new(
+            move |state: S, params: Value| -> BoxFuture<'static, Result<Value, RpcError>> {
                 let parsed = serde_json::from_value(params);
                 let Ok(p) = parsed else {
                     return Box::pin(async move { Err(RpcError::InvalidParams) });
@@ -134,7 +132,7 @@ impl<S: Send + Sync + 'static> Router<S> {
 
     pub async fn handle_with_state(
         &self,
-        state: Arc<S>,
+        state: S,
         method: &str,
         params: Value,
     ) -> Result<Value, RpcError> {
