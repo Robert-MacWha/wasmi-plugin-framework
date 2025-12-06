@@ -1,7 +1,17 @@
 [package]
 name = "test-plugin"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+rust-version.workspace = true
+description = "Wasmi-Plugin-Framework test plugin"
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+readme.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+exclude.workspace = true
+publish = false
 
 [dependencies]
 rand = { workspace = true }
@@ -12,4 +22,5 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
 [profile.release]
-lto = true
+lto = "fat"
+codegen-units = 1

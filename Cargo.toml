@@ -8,6 +8,18 @@ members = [
 
 resolver = "2"
 
+[workspace.package]
+authors = ["Robert MacWha <robert@macwha.com>"]
+repository = "https://github.com/Robert-MacWha/wasmi-plugin-framework"
+version = "0.1.0"
+rust-version = "1.91.1"
+edition = "2024"
+readme = "README.md"
+license = "MIT"
+keywords = ["wasm", "webassembly", "vm", "wasi", "plugins"]
+categories = ["wasm", "virtualization"]
+exclude = ["tests", "benches"]
+
 [workspace.dependencies]
 async-trait = "0.1"
 futures = "0.3"
