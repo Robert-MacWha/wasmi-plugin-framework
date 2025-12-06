@@ -10,4 +10,4 @@ web-time = { workspace = true }
 gloo-timers = { workspace = true }
 
 [target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dependencies]
-tokio = { version = "1.47.1", features = ["rt", "macros"] }
+tokio = { workspace = true }

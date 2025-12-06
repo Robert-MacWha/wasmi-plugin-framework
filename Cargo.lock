@@ -1229,8 +1229,9 @@ dependencies = [
 
 [[package]]
 name = "wasmi"
-version = "1.0.1"
-source = "git+https://github.com/Robert-MacWha/wasmi?branch=memory-leak-patch#59d31d1794403a8581d6c908e06f2316c968db79"
+version = "0.50.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "26d7792a4864380620cde2b918cc8c3c1e95c864838fa30d89c6eb6973c50fd1"
 dependencies = [
  "spin",
  "wasmi_collections",
@@ -1289,24 +1290,27 @@ dependencies = [
 
 [[package]]
 name = "wasmi_collections"
-version = "1.0.1"
-source = "git+https://github.com/Robert-MacWha/wasmi?branch=memory-leak-patch#59d31d1794403a8581d6c908e06f2316c968db79"
+version = "0.50.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "664e9b6298d799372dfbb56c94542526a03c1031bba3234f5d6191067685225c"
 dependencies = [
  "string-interner",
 ]
 
 [[package]]
 name = "wasmi_core"
-version = "1.0.1"
-source = "git+https://github.com/Robert-MacWha/wasmi?branch=memory-leak-patch#59d31d1794403a8581d6c908e06f2316c968db79"
+version = "0.50.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "446be206a0da898de86cbb96555896f49d5e75b69a2a347d1e0ee6103585d28e"
 dependencies = [
  "libm",
 ]
 
 [[package]]
 name = "wasmi_ir"
-version = "1.0.1"
-source = "git+https://github.com/Robert-MacWha/wasmi?branch=memory-leak-patch#59d31d1794403a8581d6c908e06f2316c968db79"
+version = "0.50.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f12ac8605ece78bf7682a0607d43f5a4aacd866fde362beb1f0695437887a2f9"
 dependencies = [
  "wasmi_core",
 ]
