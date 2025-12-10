@@ -2,6 +2,7 @@ use std::{fmt::Display, io::BufReader, sync::Arc};
 
 use async_trait::async_trait;
 use futures::{AsyncBufReadExt, FutureExt};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 use tracing::info;
@@ -20,7 +21,7 @@ use crate::{
     plugin_instance::{SpawnError, spawn_plugin},
 };
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PluginId(Uuid);
 
 impl Default for PluginId {
