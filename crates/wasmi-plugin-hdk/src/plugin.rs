@@ -36,12 +36,6 @@ impl PluginId {
     }
 }
 
-impl From<PluginId> for String {
-    fn from(plugin_id: PluginId) -> Self {
-        plugin_id.0.to_string()
-    }
-}
-
 impl From<u128> for PluginId {
     fn from(value: u128) -> Self {
         PluginId(Uuid::from_u128(value))
@@ -50,7 +44,12 @@ impl From<u128> for PluginId {
 
 impl Display for PluginId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
+        if f.alternate() {
+            write!(f, "{}", self.0) // full: {:#}
+        } else {
+            let uuid_str = self.0.as_simple().to_string();
+            write!(f, "{}", &uuid_str[..6]) // short: {}
+        }
     }
 }
 
