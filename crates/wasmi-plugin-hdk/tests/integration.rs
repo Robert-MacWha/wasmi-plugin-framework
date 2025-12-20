@@ -1,8 +1,7 @@
 use serde_json::Value;
 use std::sync::Arc;
 use tracing::info;
-use wasmi_plugin_hdk::{plugin::Plugin, server::HostServer};
-use wasmi_plugin_pdk::transport::Transport;
+use wasmi_plugin_hdk::{plugin::Plugin, server::Server};
 use web_time::{Instant, SystemTime};
 
 #[cfg(target_family = "wasm")]
@@ -14,8 +13,8 @@ fn load_plugin_wasm() -> Vec<u8> {
     PLUGIN_WASM.to_vec()
 }
 
-fn get_host_server() -> HostServer<()> {
-    HostServer::default()
+fn get_host_server() -> Server<()> {
+    Server::default()
         .with_method("ping", |_, _params: ()| async move {
             info!("Received ping request, sending pong response");
             Ok("pong".to_string())

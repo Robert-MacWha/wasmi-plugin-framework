@@ -1,25 +1,21 @@
 use rand::Rng;
 use serde_json::{self, Value};
-use std::{io::stderr, sync::Arc};
+use std::io::stderr;
 use tracing::{error, info, level_filters::LevelFilter};
 use tracing_subscriber::fmt;
-use wasmi_plugin_pdk::{
-    rpc_message::RpcError,
-    server::PluginServer,
-    transport::{JsonRpcTransport, Transport},
-};
+use wasmi_plugin_pdk::{client::Client, rpc_message::RpcError, server::Server};
 
-async fn ping(_: Arc<JsonRpcTransport>, _: ()) -> Result<Value, RpcError> {
+fn ping(_: &mut Client, _: ()) -> Result<Value, RpcError> {
     Ok(Value::String("pong".to_string()))
 }
 
-async fn get_random_number(_: Arc<JsonRpcTransport>, _: ()) -> Result<Value, RpcError> {
+fn get_random_number(_: &mut Client, _: ()) -> Result<Value, RpcError> {
     let mut rng = rand::rng();
     let random_number: u64 = rng.random();
     Ok(Value::Number(random_number.into()))
 }
 
-async fn get_time(_: Arc<JsonRpcTransport>, _: ()) -> Result<Value, RpcError> {
+fn get_time(_: &mut Client, _: ()) -> Result<Value, RpcError> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|e| {
@@ -29,16 +25,16 @@ async fn get_time(_: Arc<JsonRpcTransport>, _: ()) -> Result<Value, RpcError> {
     Ok(Value::Number(now.as_secs().into()))
 }
 
-async fn sleep(_: Arc<JsonRpcTransport>, duration_ms: u64) -> Result<(), RpcError> {
-    info!("Sleeping for {} milliseconds", duration_ms);
-    tokio::time::sleep(std::time::Duration::from_millis(duration_ms)).await;
-    info!("Woke up after sleeping for {} milliseconds", duration_ms);
-    Ok(())
-}
+// async fn sleep(_: Arc<JsonRpcTransport>, duration_ms: u64) -> Result<(), RpcError> {
+//     info!("Sleeping for {} milliseconds", duration_ms);
+//     tokio::time::sleep(std::time::Duration::from_millis(duration_ms)).await;
+//     info!("Woke up after sleeping for {} milliseconds", duration_ms);
+//     Ok(())
+// }
 
-async fn many_echo(transport: Arc<JsonRpcTransport>, limit: u64) -> Result<(), RpcError> {
+fn many_echo(client: &mut Client, limit: u64) -> Result<(), RpcError> {
     for i in 0..limit {
-        let resp = transport.call("echo", Value::Number(i.into())).await?;
+        let resp = client.call("echo", Value::Number(i.into()))?;
 
         if resp.id != i {
             error!("Incorrect response id: expected {}, got {}", i, resp.id);
@@ -54,7 +50,7 @@ async fn many_echo(transport: Arc<JsonRpcTransport>, limit: u64) -> Result<(), R
     Ok(())
 }
 
-async fn prime_sieve(_transport: Arc<JsonRpcTransport>, limit: u64) -> Result<Value, RpcError> {
+fn prime_sieve(_: &mut Client, limit: u64) -> Result<Value, RpcError> {
     let limit = limit as usize;
     let primes = sieve_of_eratosthenes(limit);
     info!("Generated {} primes up to {}", primes.len(), limit);
@@ -94,11 +90,11 @@ fn main() {
         .init();
     info!("Starting plugin...");
 
-    PluginServer::new_with_transport()
+    Server::new()
         .with_method("ping", ping)
         .with_method("get_random_number", get_random_number)
         .with_method("get_time", get_time)
-        .with_method("sleep", sleep)
+        // .with_method("sleep", sleep)
         .with_method("many_echo", many_echo)
         .with_method("prime_sieve", prime_sieve)
         .run();

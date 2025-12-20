@@ -1,7 +1,6 @@
-use std::{fmt::Display, io::BufReader, sync::Arc};
+use std::{fmt::Display, sync::Arc};
 
-use async_trait::async_trait;
-use futures::{AsyncBufReadExt, FutureExt};
+use futures::{AsyncBufReadExt, FutureExt, future::BoxFuture};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
@@ -11,11 +10,10 @@ use wasmi::{Engine, Module};
 use wasmi_plugin_pdk::{
     api::RequestHandler,
     rpc_message::{RpcError, RpcResponse},
-    server::BoxFuture,
-    transport::{JsonRpcTransport, Transport},
 };
 
 use crate::{
+    client::Client,
     compile::compile_plugin,
     host_handler::HostHandler,
     plugin_instance::{SpawnError, spawn_plugin},
@@ -55,7 +53,7 @@ impl Display for PluginId {
 
 type Logger = Box<dyn Fn(&str, &str) + Send + Sync>;
 
-/// Plugin is an async-capable instance of a plugin
+/// Plugin is an async-capable instance of a wasm guest module
 pub struct Plugin {
     name: String,
     id: PluginId,
@@ -152,10 +150,8 @@ impl From<PluginError> for RpcError {
     }
 }
 
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-impl Transport<PluginError> for Plugin {
-    async fn call(&self, method: &str, params: Value) -> Result<RpcResponse, PluginError> {
+impl Plugin {
+    pub async fn call(&self, method: &str, params: Value) -> Result<RpcResponse, PluginError> {
         let (stdin_writer, stdout_reader, stderr_reader, is_running, instance_task) =
             spawn_plugin(&self.engine, &self.module, self.max_fuel)?;
 
@@ -175,9 +171,10 @@ impl Transport<PluginError> for Plugin {
             uuid: self.id,
         };
 
-        let buf_reader = BufReader::new(stdout_reader);
-        let transport = JsonRpcTransport::with_handler(buf_reader, stdin_writer, handler);
-        let rpc_task = transport.call(method, params).fuse();
+        // let transport = JsonRpcTransport::with_handler(buf_reader, stdin_writer, handler);
+        let mut client = Client::new(stdout_reader, stdin_writer);
+        let rpc_task = client.call(method, params, handler).fuse();
+        // let rpc_task = transport.call(method, params).fuse();
 
         let instance_task = instance_task.fuse();
         futures::pin_mut!(rpc_task, instance_task, stderr_task);

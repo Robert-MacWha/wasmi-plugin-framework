@@ -48,6 +48,33 @@ pub enum RpcError {
     Custom(String),
 }
 
+impl RpcMessage {
+    pub fn request(jsonrpc: &str, id: u64, method: &str, params: Value) -> Self {
+        RpcMessage::RpcRequest(RpcRequest {
+            jsonrpc: jsonrpc.into(),
+            id,
+            method: method.into(),
+            params,
+        })
+    }
+
+    pub fn response(jsonrpc: &str, id: u64, result: Value) -> Self {
+        RpcMessage::RpcResponse(RpcResponse {
+            jsonrpc: jsonrpc.into(),
+            id,
+            result,
+        })
+    }
+
+    pub fn error_response(jsonrpc: &str, id: u64, error: RpcError) -> Self {
+        RpcMessage::RpcErrorResponse(RpcErrorResponse {
+            jsonrpc: jsonrpc.into(),
+            id,
+            error,
+        })
+    }
+}
+
 impl RpcError {
     pub fn code(&self) -> i64 {
         match self {
@@ -62,6 +89,10 @@ impl RpcError {
 
     pub fn message(&self) -> String {
         self.to_string()
+    }
+
+    pub fn custom<S: Into<String>>(msg: S) -> Self {
+        RpcError::Custom(msg.into())
     }
 }
 

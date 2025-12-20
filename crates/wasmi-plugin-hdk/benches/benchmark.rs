@@ -4,9 +4,8 @@ use std::sync::Arc;
 use tokio::runtime::Builder;
 use wasmi_plugin_hdk::{
     plugin::{Plugin, PluginId},
-    server::HostServer,
+    server::Server,
 };
-use wasmi_plugin_pdk::transport::Transport;
 
 const PLUGIN_WASM: &[u8] = include_bytes!("../../../target/wasm32-wasip1/release/test-plugin.wasm");
 
@@ -14,8 +13,8 @@ fn load_plugin_wasm() -> Vec<u8> {
     PLUGIN_WASM.to_vec()
 }
 
-fn get_host_server() -> HostServer<(Option<PluginId>, ())> {
-    HostServer::default().with_method("echo", |_, params: Value| async move { Ok(params) })
+fn get_host_server() -> Server<(Option<PluginId>, ())> {
+    Server::default().with_method("echo", |_, params: Value| async move { Ok(params) })
 }
 
 /// Benchmark a single ping request to the wasm module.

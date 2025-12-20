@@ -1,3 +1,4 @@
+mod client;
 mod compile;
 pub mod host_handler;
 pub mod plugin;

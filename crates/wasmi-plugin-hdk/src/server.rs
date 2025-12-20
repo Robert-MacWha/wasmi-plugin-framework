@@ -1,31 +1,38 @@
+use std::collections::HashMap;
+
+use futures::future::BoxFuture;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
-use wasmi_plugin_pdk::{
-    rpc_message::RpcError,
-    server::{BoxFuture, MaybeSend, Router},
-};
+use wasmi_plugin_pdk::{api::MaybeSend, rpc_message::RpcError};
 
 use crate::{host_handler::HostHandler, plugin::PluginId};
 
-pub struct HostServer<S: Clone + Send + Sync + 'static> {
+pub struct Server<S: Clone + Send + Sync + 'static> {
     state: S,
-    router: Router<(PluginId, S)>,
+    methods: HashMap<
+        String,
+        Box<
+            dyn Send
+                + Sync
+                + Fn((PluginId, S), Value) -> BoxFuture<'static, Result<Value, RpcError>>,
+        >,
+    >,
 }
 
-impl<S: Default + Clone + Send + Sync + 'static> Default for HostServer<S> {
+impl<S: Default + Clone + Send + Sync + 'static> Default for Server<S> {
     fn default() -> Self {
         Self {
             state: S::default(),
-            router: Router::new(),
+            methods: HashMap::default(),
         }
     }
 }
 
-impl<S: Clone + Send + Sync + 'static> HostServer<S> {
+impl<S: Clone + Send + Sync + 'static> Server<S> {
     pub fn new(state: S) -> Self {
         Self {
-            router: Router::new(),
             state,
+            methods: HashMap::default(),
         }
     }
 
@@ -36,12 +43,29 @@ impl<S: Clone + Send + Sync + 'static> HostServer<S> {
         F: Fn((PluginId, S), P) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<R, RpcError>> + MaybeSend + 'static,
     {
-        self.router = self.router.with_method(name, func);
+        let f = Box::new(
+            move |state: (PluginId, S),
+                  params: Value|
+                  -> BoxFuture<'static, Result<Value, RpcError>> {
+                let parsed = serde_json::from_value(params);
+                let Ok(p) = parsed else {
+                    return Box::pin(async move { Err(RpcError::InvalidParams) });
+                };
+
+                let fut = func(state, p);
+                Box::pin(async move {
+                    let result = fut.await?;
+                    Ok(serde_json::to_value(result).unwrap())
+                })
+            },
+        );
+
+        self.methods.insert(name.to_string(), f);
         self
     }
 }
 
-impl<S: Clone + Send + Sync + 'static> HostHandler for HostServer<S> {
+impl<S: Clone + Send + Sync + 'static> HostHandler for Server<S> {
     fn handle<'a>(
         &'a self,
         plugin: PluginId,
@@ -50,7 +74,8 @@ impl<S: Clone + Send + Sync + 'static> HostHandler for HostServer<S> {
     ) -> BoxFuture<'a, Result<Value, RpcError>> {
         Box::pin(async move {
             let state = (plugin, self.state.clone());
-            self.router.handle_with_state(state, method, params).await
+            let method = self.methods.get(method).ok_or(RpcError::MethodNotFound)?;
+            method(state, params).await
         })
     }
 }
