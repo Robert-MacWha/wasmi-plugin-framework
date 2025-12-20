@@ -196,7 +196,7 @@ impl<R: Read + 'static, W: Write + 'static> Client<R, W> {
     ///
     /// Used primarily by hosts to handle requests from guests while waiting for responses.
     ///
-    /// ```
+    /// ```#no_run
     /// host   ->   guest: balance()
     ///   host <-   guest: balanceOf(1)
     ///   host  ->> guest: 42
