@@ -48,7 +48,7 @@ impl Display for PluginId {
             write!(f, "{}", self.0) // full: {:#}
         } else {
             let uuid_str = self.0.as_simple().to_string();
-            write!(f, "{}", &uuid_str[..6]) // short: {}
+            write!(f, "{}", &uuid_str[uuid_str.len() - 6..]) // short {}
         }
     }
 }
