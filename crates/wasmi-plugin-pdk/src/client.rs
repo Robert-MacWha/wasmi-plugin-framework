@@ -1,7 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     io::{BufRead, BufReader, Read, Write},
-    sync::{Mutex, atomic::AtomicU64},
+    sync::{Arc, Mutex, atomic::AtomicU64},
 };
 
 use serde_json::Value;
@@ -15,19 +15,19 @@ use crate::{
 };
 
 pub struct Client<R: Read + 'static = std::io::Stdin, W: Write + 'static = std::io::Stdout> {
-    reader: Mutex<BufReader<R>>,
-    writer: Mutex<W>,
+    reader: Arc<Mutex<BufReader<R>>>,
+    writer: Arc<Mutex<W>>,
     next_id: AtomicU64,
-    pending: Mutex<HashMap<u64, Result<RpcResponse, RpcErrorResponse>>>,
+    pending: Arc<Mutex<HashMap<u64, Result<RpcResponse, RpcErrorResponse>>>>,
 }
 
 impl Client<std::io::Stdin, std::io::Stdout> {
     pub fn new() -> Self {
         Self {
-            reader: Mutex::new(BufReader::new(std::io::stdin())),
-            writer: Mutex::new(std::io::stdout()),
-            next_id: AtomicU64::new(1),
-            pending: Mutex::new(HashMap::new()),
+            reader: Arc::new(Mutex::new(BufReader::new(std::io::stdin()))),
+            writer: Arc::new(Mutex::new(std::io::stdout())),
+            next_id: AtomicU64::default(),
+            pending: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -35,10 +35,10 @@ impl Client<std::io::Stdin, std::io::Stdout> {
 impl<R: Read + 'static, W: Write + 'static> Client<R, W> {
     pub fn new_with(reader: R, writer: W) -> Self {
         Self {
-            reader: Mutex::new(BufReader::new(reader)),
-            writer: Mutex::new(writer),
-            next_id: AtomicU64::new(1),
-            pending: Mutex::new(HashMap::new()),
+            reader: Arc::new(Mutex::new(BufReader::new(reader))),
+            writer: Arc::new(Mutex::new(writer)),
+            next_id: AtomicU64::default(),
+            pending: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 

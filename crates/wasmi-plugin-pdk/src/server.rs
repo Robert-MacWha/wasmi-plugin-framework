@@ -1,19 +1,19 @@
-use std::{
-    collections::HashMap,
-    io::{BufWriter, Write},
-};
+use std::io::{BufWriter, Write};
 
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use thiserror::Error;
+use tokio::runtime::Builder;
 
 use crate::{
+    api::MaybeSend,
     client::Client,
+    router::Router,
     rpc_message::{RpcError, RpcErrorResponse, RpcMessage, RpcResponse},
 };
 
 pub struct Server {
-    methods: HashMap<String, Box<dyn Fn(&mut Client, Value) -> Result<Value, RpcError>>>,
+    router: Router<Client>,
 }
 
 #[derive(Debug, Error)]
@@ -37,35 +37,29 @@ pub enum PluginServerError {
 impl Server {
     pub fn new() -> Self {
         Self {
-            methods: HashMap::new(),
+            router: Router::default(),
         }
     }
 
     /// Registers a method handler with the server.
-    pub fn with_method<P, R, F>(mut self, name: &str, func: F) -> Self
+    pub fn with_method<P, R, F, Fut>(mut self, name: &str, func: F) -> Self
     where
         P: DeserializeOwned + 'static,
         R: Serialize + 'static,
-        F: Fn(&mut Client, P) -> Result<R, RpcError> + 'static,
+        F: Fn(&mut Client, P) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<R, RpcError>> + MaybeSend + 'static,
     {
-        let f = Box::new(
-            move |client: &mut Client, params: Value| -> Result<Value, RpcError> {
-                let parsed = serde_json::from_value(params);
-                let Ok(p) = parsed else {
-                    return Err(RpcError::InvalidParams);
-                };
-
-                let result = func(client, p)?;
-                Ok(serde_json::to_value(result).unwrap())
-            },
-        );
-
-        self.methods.insert(name.to_string(), f);
+        self.router = self.router.with_method(name, func);
         self
     }
 
     pub fn run(&self) {
-        self.try_run().unwrap();
+        let x = self.try_run();
+
+        if let Err(e) = x {
+            eprintln!("Plugin server error: {}", e);
+            std::process::exit(1);
+        }
     }
 
     /// Runs the server, blocking the current thread to process a single request.
@@ -85,13 +79,15 @@ impl Server {
         };
 
         //? Dispatch handler
-        let handler = self
-            .methods
-            .get(&request.method)
-            .ok_or(PluginServerError::MethodNotFound)?;
+        let rt = Builder::new_current_thread().enable_time().build().unwrap();
+        let local = tokio::task::LocalSet::new();
 
-        let mut client = Client::new();
-        let resp = handler(&mut client, request.params);
+        let resp = rt.block_on(local.run_until(async move {
+            let mut client = Client::new();
+            self.router
+                .handle_with_state(&mut client, &request.method, request.params)
+                .await
+        }));
 
         //? Send response
         let resp = match resp {

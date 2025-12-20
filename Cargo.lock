@@ -918,6 +918,7 @@ version = "0.1.0"
 dependencies = [
  "rand",
  "serde_json",
+ "tokio",
  "tracing",
  "tracing-subscriber",
  "wasmi-plugin-pdk",
@@ -1273,6 +1274,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+ "tokio",
  "tracing",
  "tracing-subscriber",
  "wasmi-plugin-rt",

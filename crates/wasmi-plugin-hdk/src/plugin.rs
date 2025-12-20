@@ -171,10 +171,8 @@ impl Plugin {
             uuid: self.id,
         };
 
-        // let transport = JsonRpcTransport::with_handler(buf_reader, stdin_writer, handler);
         let mut client = Client::new(stdout_reader, stdin_writer);
         let rpc_task = client.call(method, params, handler).fuse();
-        // let rpc_task = transport.call(method, params).fuse();
 
         let instance_task = instance_task.fuse();
         futures::pin_mut!(rpc_task, instance_task, stderr_task);

@@ -1,6 +1,7 @@
 use serde_json::Value;
 use std::sync::Arc;
 use tracing::info;
+use tracing_test::traced_test;
 use wasmi_plugin_hdk::{plugin::Plugin, server::Server};
 use web_time::{Instant, SystemTime};
 
@@ -102,6 +103,32 @@ async fn test_sleep() {
 
 #[cfg_attr(target_family = "wasm", wasm_bindgen_test)]
 #[cfg_attr(not(target_family = "wasm"), tokio::test)]
+#[traced_test]
+async fn test_tokio_sleep() {
+    info!("Starting tokio sleep test...");
+
+    let wasm_bytes = load_plugin_wasm();
+    let handler = Arc::new(get_host_server());
+
+    let plugin = Plugin::new("test_plugin", wasm_bytes, handler).unwrap();
+
+    let sleep_duration = 1500; // milliseconds
+    let start = Instant::now();
+    plugin
+        .call("tokio_sleep", Value::Number(sleep_duration.into()))
+        .await
+        .unwrap();
+    let elapsed = start.elapsed().as_millis();
+
+    assert!(
+        elapsed >= sleep_duration as u128,
+        "Sleep duration too short: {} ms",
+        elapsed
+    );
+}
+
+#[cfg_attr(target_family = "wasm", wasm_bindgen_test)]
+#[cfg_attr(not(target_family = "wasm"), tokio::test)]
 async fn test_many_echo() {
     info!("Starting many echo test...");
 
@@ -133,4 +160,18 @@ async fn test_prime_sieve() {
     info!("Prime sieve response: {:?}", response);
     let count = response.result["count"].as_u64().unwrap();
     assert_eq!(count, 168);
+}
+
+#[cfg_attr(target_family = "wasm", wasm_bindgen_test)]
+#[cfg_attr(not(target_family = "wasm"), tokio::test)]
+async fn test_undefined_method() {
+    info!("Starting undefined method test...");
+
+    let wasm_bytes = load_plugin_wasm();
+    let handler = Arc::new(get_host_server());
+
+    let plugin = Plugin::new("test_plugin", wasm_bytes, handler).unwrap();
+
+    let response = plugin.call("undefined_method", Value::Null).await;
+    assert!(response.is_err(), "Expected error for undefined method");
 }
