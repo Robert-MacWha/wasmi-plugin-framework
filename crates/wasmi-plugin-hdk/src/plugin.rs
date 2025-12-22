@@ -89,7 +89,7 @@ impl Plugin {
             logger: Box::new(default_plugin_logger),
             max_fuel: None,
             #[cfg(not(target_arch = "wasm32"))]
-            compiled: Compiled::new(&wasm_bytes)?,
+            compiled: Compiled::new(name, &wasm_bytes)?,
             wasm_bytes,
         })
     }
@@ -176,7 +176,7 @@ impl Plugin {
         ),
         PluginError,
     > {
-        let (bridge, stdout, stdin) = bridge::NativeBridge::new(&self.name, self.compiled.clone())
+        let (bridge, stdout, stdin) = bridge::NativeBridge::new(self.compiled.clone())
             .map_err(|_| PluginError::PluginDied)?;
         Ok((Box::new(bridge), Box::new(stdout), Box::new(stdin)))
     }

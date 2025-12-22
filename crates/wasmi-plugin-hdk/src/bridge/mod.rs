@@ -1,14 +1,14 @@
 #[cfg(not(target_arch = "wasm32"))]
 mod native_bridge;
-
-#[cfg(target_arch = "wasm32")]
-mod worker_bridge;
-
 #[cfg(not(target_arch = "wasm32"))]
 pub use native_bridge::NativeBridge;
+#[cfg(not(target_arch = "wasm32"))]
+mod virtual_file;
 
 #[cfg(target_arch = "wasm32")]
 pub use worker_bridge::WorkerBridge;
+#[cfg(target_arch = "wasm32")]
+mod worker_bridge;
 
 pub trait Bridge {
     fn terminate(self: Box<Self>);

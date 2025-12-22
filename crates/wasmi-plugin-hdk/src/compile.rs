@@ -1,31 +1,24 @@
-// use wasmi::{Config, Engine, Module};
-
-// pub fn compile_plugin(wasm_bytes: Vec<u8>) -> Result<(Engine, Module), wasmi::Error> {
-//     let mut config = Config::default();
-//     config.consume_fuel(true);
-//     // https://github.com/wasmi-labs/wasmi/issues/1647
-//     // TODO: Switch to lazy execution, seems faster.
-//     config.compilation_mode(wasmi::CompilationMode::Eager);
-//     config.set_max_cached_stacks(100);
-//     let engine = Engine::new(&config);
-//     let module = Module::new(&engine, wasm_bytes)?;
-
-//     Ok((engine, module))
-// }
-
 use wasmer::{Engine, Module};
 
 #[derive(Clone)]
 pub struct Compiled {
+    pub name: String,
     pub engine: Engine,
     pub module: Module,
+    pub module_hash: wasmer_types::ModuleHash,
 }
 
 impl Compiled {
-    pub fn new(wasm_bytes: &[u8]) -> Result<Self, wasmer::CompileError> {
+    pub fn new(name: &str, wasm_bytes: &[u8]) -> Result<Self, wasmer::CompileError> {
         let engine = Engine::default();
         let module = Module::new(&engine, wasm_bytes)?;
+        let module_hash = wasmer_types::ModuleHash::xxhash(wasm_bytes);
 
-        Ok(Compiled { engine, module })
+        Ok(Compiled {
+            name: name.to_string(),
+            engine,
+            module,
+            module_hash,
+        })
     }
 }

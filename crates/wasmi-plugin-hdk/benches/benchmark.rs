@@ -109,30 +109,10 @@ pub fn bench_call_many(c: &mut Criterion) {
     });
 }
 
-fn sieve_of_eratosthenes(limit: usize) -> Vec<usize> {
-    if limit < 2 {
-        return vec![];
-    }
-
-    let mut is_prime = vec![true; limit + 1];
-    is_prime[0] = false;
-    is_prime[1] = false;
-
-    for i in 2..=((limit as f64).sqrt() as usize) {
-        if is_prime[i] {
-            for j in ((i * i)..=limit).step_by(i) {
-                is_prime[j] = false;
-            }
-        }
-    }
-
-    (2..=limit).filter(|&i| is_prime[i]).collect()
-}
-
 criterion_group!(
     benches,
-    // bench_ping,
-    // bench_prime_sieve_small,
+    bench_ping,
+    bench_prime_sieve_small,
     bench_prime_sieve_large,
     bench_call_many
 );

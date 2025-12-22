@@ -1,15 +1,19 @@
+//! Native wasmer bridge, running the Wasm module in a separate thread.
+
 use futures::AsyncBufReadExt;
 use std::io::{Read, Write};
 use thiserror::Error;
 use tokio::spawn;
 use tokio::task::{JoinHandle, spawn_blocking};
 use tracing::info;
-use wasmer::{FunctionEnv, Instance, Module, Store};
+use wasmer_wasix::runners::wasi::{RuntimeOrEngine, WasiRunner};
 
 use crate::bridge::Bridge;
+use crate::bridge::virtual_file::{WasiInputFile, WasiOutputFile};
 use crate::compile::Compiled;
-use crate::wasi::non_blocking_pipe::non_blocking_pipe;
-use crate::wasi::wasi_ctx::WasiCtx;
+use crate::wasi::non_blocking_pipe::{
+    NonBlockingPipeReader, NonBlockingPipeWriter, non_blocking_pipe,
+};
 
 pub struct NativeBridge {
     wasm_handle: JoinHandle<()>,
@@ -26,7 +30,6 @@ pub enum NativeBridgeError {
 
 impl NativeBridge {
     pub fn new(
-        name: &str,
         compiled: Compiled,
     ) -> Result<
         (
@@ -36,6 +39,7 @@ impl NativeBridge {
         ),
         NativeBridgeError,
     > {
+        let name = compiled.name.clone();
         let (stdout_reader, stdout_writer) = non_blocking_pipe();
         let (stdin_reader, stdin_writer) = non_blocking_pipe();
         let (stderr_reader, stderr_writer) = non_blocking_pipe();
@@ -47,7 +51,6 @@ impl NativeBridge {
             }
         });
 
-        let name = name.to_string();
         let stderr_handle = spawn(async move {
             let mut buf_reader = futures::io::BufReader::new(stderr_reader);
             let mut line = String::new();
@@ -67,29 +70,29 @@ impl NativeBridge {
 
     fn run_instance(
         compiled: Compiled,
-        stdin: impl Read + Send + Sync + 'static,
-        stdout: impl Write + Send + Sync + 'static,
-        stderr: impl Write + Send + Sync + 'static,
+        stdin: NonBlockingPipeReader,
+        stdout: NonBlockingPipeWriter,
+        stderr: NonBlockingPipeWriter,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let engine = compiled.engine;
         let module = compiled.module;
 
-        let mut store = Store::new(engine);
+        let stdin = WasiInputFile { reader: stdin };
+        let stdout = WasiOutputFile { writer: stdout };
+        let stderr = WasiOutputFile { writer: stderr };
 
-        // TODO: Switch to using wasmer-wasix
-        let wasi_ctx = WasiCtx::new()
-            .set_stdin(Box::new(stdin))
-            .set_stdout(Box::new(stdout))
-            .set_stderr(Box::new(stderr));
-        let function_env = FunctionEnv::new(&mut store, wasi_ctx);
-        let import_object = WasiCtx::import_object(&mut store, &function_env);
-        let instance = Instance::new(&mut store, &module, &import_object)?;
-        function_env.as_mut(&mut store).memory =
-            Some(instance.exports.get_memory("memory")?.clone());
+        let mut runner = WasiRunner::new();
+        runner
+            .with_stdin(Box::new(stdin))
+            .with_stdout(Box::new(stdout))
+            .with_stderr(Box::new(stderr));
 
-        // Start the plugin
-        let start = instance.exports.get_function("_start")?;
-        start.call(&mut store, &[])?;
+        let _ = runner.run_wasm(
+            RuntimeOrEngine::Engine(engine),
+            &compiled.name,
+            module,
+            compiled.module_hash,
+        );
 
         Ok(())
     }

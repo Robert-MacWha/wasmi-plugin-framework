@@ -1,3 +1,5 @@
+//! Web Worker wasmer bridge, running the Wasm module in a Web Worker.
+
 use std::io::{self, Read, Write};
 
 use futures::StreamExt;
