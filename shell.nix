@@ -23,6 +23,7 @@ pkgs.mkShell {
     cargo-machete
     samply
     rustfmt
+    binaryen
     rust-bin.stable.latest.rust-analyzer
   ];
 }

@@ -29,6 +29,7 @@ jobs:
       with:
         file: target/wasm32-wasip1/release/*.wasm
         optimize_all: true
+        options: -O3
 
     - run: cargo build
     - run: cargo test
@@ -53,6 +54,7 @@ jobs:
       with:
         file: target/wasm32-wasip1/release/*.wasm
         optimize_all: true
+        options: -O3
 
     - name: Setup Node.js
       uses: actions/setup-node@v4

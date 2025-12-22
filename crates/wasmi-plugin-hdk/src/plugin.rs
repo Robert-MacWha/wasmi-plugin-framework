@@ -1,24 +1,24 @@
-use std::{fmt::Display, io::BufReader, sync::Arc};
+use std::io::{Read, Write};
+use std::{fmt::Display, sync::Arc, time::Duration};
 
-use futures::{AsyncBufReadExt, FutureExt};
+use futures::FutureExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 use tracing::info;
 use uuid::Uuid;
-use wasmi::{Engine, Module};
 use wasmi_plugin_pdk::{
     api::RequestHandler,
     router::BoxFuture,
     rpc_message::{RpcError, RpcResponse},
     transport::Transport,
 };
+use wasmi_plugin_rt::sleep;
 
-use crate::{
-    compile::compile_plugin,
-    host_handler::HostHandler,
-    plugin_instance::{SpawnError, spawn_plugin},
-};
+use crate::bridge::{self, Bridge};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::compile::Compiled;
+use crate::host_handler::HostHandler;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PluginId(Uuid);
@@ -59,16 +59,17 @@ pub struct Plugin {
     name: String,
     id: PluginId,
     handler: Arc<dyn HostHandler>,
-    engine: Engine,
-    module: Module,
     logger: Logger,
     max_fuel: Option<u64>,
+    #[cfg(not(target_arch = "wasm32"))]
+    compiled: Compiled,
+    wasm_bytes: Vec<u8>,
 }
 
 #[derive(Debug, Error)]
 pub enum PluginError {
-    #[error("spawn error")]
-    SpawnError(#[from] SpawnError),
+    // #[error("spawn error")]
+    // SpawnError(#[from] SpawnError),
     #[error("transport error")]
     RpcError(#[from] RpcError),
     #[error("plugin died")]
@@ -80,17 +81,16 @@ impl Plugin {
         name: &str,
         wasm_bytes: Vec<u8>,
         handler: Arc<dyn HostHandler>,
-    ) -> Result<Self, wasmi::Error> {
-        let (engine, module) = compile_plugin(wasm_bytes.clone())?;
-
+    ) -> Result<Self, wasmer::CompileError> {
         Ok(Plugin {
             name: name.to_string(),
             id: PluginId::new(),
             handler,
-            engine,
-            module,
-            max_fuel: None,
             logger: Box::new(default_plugin_logger),
+            max_fuel: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            compiled: Compiled::new(&wasm_bytes)?,
+            wasm_bytes,
         })
     }
 
@@ -106,21 +106,6 @@ impl Plugin {
     /// no logger is provided a default logger is used.
     pub fn with_logger(mut self, logger: Logger) -> Self {
         self.logger = Box::new(logger);
-        self
-    }
-
-    /// Sets the maximum fuel for the plugin instance.
-    ///
-    /// The fuel limit controls how frequently the plugin is interrupted to
-    /// check for cancellation and yield to other tasks. Lower fuel limits
-    /// result in more frequent interruptions, which can improve responsiveness
-    /// for long-running compute-intensive tasks, but will also incur more overhead.
-    ///
-    /// Generally a fuel between 10_000 and 1_000_000 is a good starting point.
-    ///
-    /// Leave as None to use the default fuel limit, a sensible default of 100_000.
-    pub fn with_max_fuel(mut self, max_fuel: u64) -> Self {
-        self.max_fuel = Some(max_fuel);
         self
     }
 
@@ -153,41 +138,64 @@ impl From<PluginError> for RpcError {
 
 impl Plugin {
     pub async fn call(&self, method: &str, params: Value) -> Result<RpcResponse, PluginError> {
-        let (stdin_writer, stdout_reader, stderr_reader, is_running, instance_task) =
-            spawn_plugin(&self.engine, &self.module, self.max_fuel)?;
+        //? Construct URL from worker bytes
+        let (bridge, stdout_reader, stdin_writer) = self.create_bridge().unwrap();
 
-        let name = self.name.clone();
-        let stderr_task = async move {
-            let mut buf_reader = futures::io::BufReader::new(stderr_reader);
-            let mut line = String::new();
-            while buf_reader.read_line(&mut line).await.is_ok_and(|n| n > 0) {
-                (self.logger)(&name, line.trim_end());
-                line.clear();
-            }
-        }
-        .fuse();
-
+        let transport = Transport::new(stdout_reader, stdin_writer);
         let handler = PluginCallback {
             handler: self.handler.clone(),
             uuid: self.id,
         };
 
-        let buf_reader = BufReader::new(stdout_reader);
-        let transport = Transport::new(buf_reader, stdin_writer);
-        let rpc_task = transport
+        let transport_task = transport
             .async_call_with_handler(method, params, &handler)
             .fuse();
+        let timeout = sleep(Duration::from_secs(60)).fuse();
+        futures::pin_mut!(transport_task, timeout);
 
-        let instance_task = instance_task.fuse();
-        futures::pin_mut!(rpc_task, instance_task, stderr_task);
+        futures::select! {
+            res = transport_task => {
+                bridge.terminate();
+                return Ok(res?);
+            },
+            _ = timeout => {
+                bridge.terminate();
+                return Err(PluginError::PluginDied);
+            }
+        };
+    }
 
-        //? Run the transport, plugin, and stderr logger until one of them completes
-        let (res, _, _) = futures::join!(rpc_task, instance_task, stderr_task);
-        let res = res?;
+    #[cfg(not(target_arch = "wasm32"))]
+    fn create_bridge(
+        &self,
+    ) -> Result<
+        (
+            Box<dyn Bridge + Send + Sync>,
+            Box<dyn Read + Send + Sync>,
+            Box<dyn Write + Send + Sync>,
+        ),
+        PluginError,
+    > {
+        let (bridge, stdout, stdin) = bridge::NativeBridge::new(&self.name, self.compiled.clone())
+            .map_err(|_| PluginError::PluginDied)?;
+        Ok((Box::new(bridge), Box::new(stdout), Box::new(stdin)))
+    }
 
-        is_running.store(false, std::sync::atomic::Ordering::SeqCst);
-
-        Ok(res)
+    #[cfg(target_arch = "wasm32")]
+    fn create_bridge(
+        &self,
+    ) -> Result<
+        (
+            Box<dyn Bridge + Send + Sync>,
+            Box<dyn Read + Send + Sync>,
+            Box<dyn Write + Send + Sync>,
+        ),
+        PluginError,
+    > {
+        // Web uses the bytes to send to the Worker
+        let (bridge, stdout, stdin) = bridge::WorkerBridge::new(&self.name, &self.wasm_bytes)
+            .map_err(|_| PluginError::PluginDied)?;
+        Ok((Box::new(bridge), Box::new(stdout), Box::new(stdin)))
     }
 }
 

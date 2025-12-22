@@ -1,8 +1,7 @@
-use futures::future::BoxFuture;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use wasmi_plugin_pdk::{
-    router::{MaybeSend, Router},
+    router::{BoxFuture, MaybeSend, Router},
     rpc_message::RpcError,
 };
 

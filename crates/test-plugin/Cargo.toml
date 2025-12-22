@@ -22,5 +22,8 @@ tracing-subscriber = { workspace = true }
 wasmi-plugin-pdk = { workspace = true }
 
 [profile.release]
+opt-level = 3
 lto = "fat"
 codegen-units = 1
+strip = true
+panic = "abort"

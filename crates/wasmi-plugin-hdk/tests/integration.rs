@@ -27,6 +27,7 @@ fn get_host_server() -> HostServer<()> {
 
 #[cfg_attr(target_family = "wasm", wasm_bindgen_test)]
 #[cfg_attr(not(target_family = "wasm"), tokio::test)]
+#[tracing_test::traced_test]
 async fn test_plugin() {
     info!("Starting test_plugin...");
 
