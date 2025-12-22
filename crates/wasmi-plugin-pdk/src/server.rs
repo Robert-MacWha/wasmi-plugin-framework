@@ -1,66 +1,47 @@
-use std::{collections::HashMap, sync::Arc};
+use std::io::Write;
 
 use serde::{Serialize, de::DeserializeOwned};
-use serde_json::Value;
+use thiserror::Error;
 use tokio::runtime::Builder;
-use tracing::warn;
 
-use crate::{api::RequestHandler, rpc_message::RpcError, transport::JsonRpcTransport};
-
-#[cfg(target_arch = "wasm32")]
-pub type BoxFuture<'a, T> = futures::future::LocalBoxFuture<'a, T>;
-
-#[cfg(not(target_arch = "wasm32"))]
-pub type BoxFuture<'a, T> = futures::future::BoxFuture<'a, T>;
-
-#[cfg(target_arch = "wasm32")]
-pub trait MaybeSend {}
-#[cfg(target_arch = "wasm32")]
-impl<T> MaybeSend for T {}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub trait MaybeSend: Send {}
-#[cfg(not(target_arch = "wasm32"))]
-impl<T: Send> MaybeSend for T {}
-
-type HandlerFn<S> = dyn Send + Sync + Fn(S, Value) -> BoxFuture<'static, Result<Value, RpcError>>;
+use crate::{
+    router::{MaybeSend, Router},
+    rpc_message::{RpcError, RpcMessage},
+    transport::Transport,
+};
 
 /// Server is a RPC server that can handle requests by dispatching them to registered
 /// handler functions. It stores a shared state `S` that is passed into each handler.
 pub struct PluginServer {
-    transport: Arc<JsonRpcTransport>,
-    router: Router<Arc<JsonRpcTransport>>,
+    router: Router<Transport>,
 }
 
-pub struct Router<S> {
-    handlers: HashMap<String, Box<HandlerFn<S>>>,
+#[derive(Debug, Error)]
+enum PluginServerError {
+    #[error("Missing Request")]
+    MissingRequest,
+
+    #[error("Invalid Message: {0:?}")]
+    InvalidMessage(RpcMessage),
+
+    #[error("serde_json error: {0}")]
+    Serde(#[from] serde_json::Error),
+
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
 }
 
 impl PluginServer {
-    pub fn new(transport: Arc<JsonRpcTransport>) -> Self {
-        Self {
-            transport,
-            router: Router::new(),
-        }
-    }
-
-    pub fn new_with_transport() -> Self {
-        let reader = std::io::BufReader::new(std::io::stdin());
-        let writer = std::io::stdout();
-        let transport = JsonRpcTransport::new(reader, writer);
-        let transport = Arc::new(transport);
-
-        Self {
-            transport,
-            router: Router::new(),
-        }
+    pub fn new() -> Self {
+        let router = Router::new();
+        Self { router }
     }
 
     pub fn with_method<P, R, F, Fut>(mut self, name: &str, func: F) -> Self
     where
         P: DeserializeOwned + 'static,
         R: Serialize + 'static,
-        F: Fn(Arc<JsonRpcTransport>, P) -> Fut + Send + Sync + 'static,
+        F: Fn(Transport, P) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<R, RpcError>> + MaybeSend + 'static,
     {
         self.router = self.router.with_method(name, func);
@@ -68,84 +49,57 @@ impl PluginServer {
     }
 
     pub fn run(self) {
-        let transport = self.transport.clone();
+        match self.try_run() {
+            Ok(()) => {}
+            Err(e) => {
+                eprintln!("Plugin server error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        // let transport = self.transport.clone();
 
-        let rt = Builder::new_current_thread().enable_time().build().unwrap();
+        // let rt = Builder::new_current_thread().enable_time().build().unwrap();
+        // let local = tokio::task::LocalSet::new();
+
+        // rt.block_on(local.run_until(async move {
+        //     let _ = transport.process_next_line(Some(&self)).await;
+        // }));
+    }
+
+    fn try_run(&self) -> Result<(), PluginServerError> {
+        //? Read request
+        let mut line = String::new();
+        std::io::stdin()
+            .read_line(&mut line)
+            .map_err(|_| PluginServerError::MissingRequest)?;
+
+        let message: RpcMessage = serde_json::from_str(&line)?;
+        let RpcMessage::RpcRequest(request) = message else {
+            return Err(PluginServerError::InvalidMessage(message));
+        };
+
+        //? Dispatch handler
+        let rt = Builder::new_current_thread().enable_time().build()?;
         let local = tokio::task::LocalSet::new();
 
-        rt.block_on(local.run_until(async move {
-            let _ = transport.process_next_line(Some(&self)).await;
+        let resp = rt.block_on(local.run_until(async move {
+            let transport = Transport::new(std::io::stdin(), std::io::stdout());
+            self.router
+                .handle_with_state(transport, &request.method, request.params)
+                .await
         }));
-    }
-}
 
-impl RequestHandler<RpcError> for PluginServer {
-    fn handle<'a>(
-        &'a self,
-        method: &'a str,
-        params: Value,
-    ) -> BoxFuture<'a, Result<Value, RpcError>> {
-        let state = self.transport.clone();
-        Box::pin(async move { self.router.handle_with_state(state, method, params).await })
-    }
-}
-
-impl<S: Send + Sync + Clone + 'static> Default for Router<S> {
-    fn default() -> Self {
-        Router {
-            handlers: HashMap::new(),
-        }
-    }
-}
-
-impl<S: Send + Sync + Clone + 'static> Router<S> {
-    pub fn new() -> Router<S> {
-        Self::default()
-    }
-
-    /// Register a new RPC method with the router. The method is identified by the
-    /// given name, and the handler function should accept the shared state and
-    /// deserialized params.
-    ///
-    /// Handlers should implement: `async fn handler(state: S, params: P) -> Result<R, RpcError>`
-    pub fn with_method<P, R, F, Fut>(mut self, name: &str, func: F) -> Self
-    where
-        P: DeserializeOwned + 'static,
-        R: Serialize + 'static,
-        F: Fn(S, P) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<R, RpcError>> + MaybeSend + 'static,
-    {
-        // Handler function that parses json params, calls the provided func,
-        // and serializes the result back to json.
-        let f = Box::new(
-            move |state: S, params: Value| -> BoxFuture<'static, Result<Value, RpcError>> {
-                let parsed = serde_json::from_value(params);
-                let Ok(p) = parsed else {
-                    return Box::pin(async move { Err(RpcError::InvalidParams) });
-                };
-
-                let fut = func(state, p);
-                Box::pin(async move {
-                    let result = fut.await?;
-                    Ok(serde_json::to_value(result).unwrap())
-                })
-            },
-        );
-
-        self.handlers.insert(name.to_string(), f);
-        self
-    }
-
-    pub async fn handle_with_state(
-        &self,
-        state: S,
-        method: &str,
-        params: Value,
-    ) -> Result<Value, RpcError> {
-        let Some(handler) = self.handlers.get(method) else {
-            warn!("Method not found: {}", method);
-            return Err(RpcError::MethodNotFound);
+        //? Send response
+        let resp = match resp {
+            Ok(result) => RpcMessage::response(request.id, result),
+            Err(error) => RpcMessage::error_response(request.id, error),
         };
-        handler(state, params).await
+
+        let serialized = serde_json::to_string(&resp)?;
+        let msg = format!("{}\n", serialized);
+        std::io::stdout().write_all(msg.as_bytes())?;
+        std::io::stdout().flush()?;
+
+        Ok(())
     }
 }

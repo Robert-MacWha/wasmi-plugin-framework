@@ -1,6 +1,5 @@
 use std::{fmt::Display, io::BufReader, sync::Arc};
 
-use async_trait::async_trait;
 use futures::{AsyncBufReadExt, FutureExt};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -10,9 +9,9 @@ use uuid::Uuid;
 use wasmi::{Engine, Module};
 use wasmi_plugin_pdk::{
     api::RequestHandler,
+    router::BoxFuture,
     rpc_message::{RpcError, RpcResponse},
-    server::BoxFuture,
-    transport::{JsonRpcTransport, Transport},
+    transport::Transport,
 };
 
 use crate::{
@@ -152,10 +151,8 @@ impl From<PluginError> for RpcError {
     }
 }
 
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-impl Transport<PluginError> for Plugin {
-    async fn call(&self, method: &str, params: Value) -> Result<RpcResponse, PluginError> {
+impl Plugin {
+    pub async fn call(&self, method: &str, params: Value) -> Result<RpcResponse, PluginError> {
         let (stdin_writer, stdout_reader, stderr_reader, is_running, instance_task) =
             spawn_plugin(&self.engine, &self.module, self.max_fuel)?;
 
@@ -176,8 +173,10 @@ impl Transport<PluginError> for Plugin {
         };
 
         let buf_reader = BufReader::new(stdout_reader);
-        let transport = JsonRpcTransport::with_handler(buf_reader, stdin_writer, handler);
-        let rpc_task = transport.call(method, params).fuse();
+        let transport = Transport::new(buf_reader, stdin_writer);
+        let rpc_task = transport
+            .async_call_with_handler(method, params, &handler)
+            .fuse();
 
         let instance_task = instance_task.fuse();
         futures::pin_mut!(rpc_task, instance_task, stderr_task);

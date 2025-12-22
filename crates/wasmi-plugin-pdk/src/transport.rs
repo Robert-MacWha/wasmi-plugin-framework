@@ -1,282 +1,266 @@
 use std::{
-    collections::HashMap,
-    io::{BufRead, Write},
-    sync::atomic::AtomicU64,
+    collections::{HashMap, HashSet},
+    io::{BufRead, BufReader, Read, Write},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
-use async_trait::async_trait;
-use futures::{
-    channel::oneshot::{self, Sender},
-    lock::Mutex,
-};
 use serde_json::Value;
-use tracing::{trace, warn};
+use tracing::info;
 use wasmi_plugin_rt::yield_now;
 
 use crate::{
-    api::{ApiError, RequestHandler},
-    rpc_message::{RpcError, RpcErrorResponse, RpcMessage, RpcRequest, RpcResponse},
+    api::RequestHandler,
+    rpc_message::{RpcError, RpcErrorResponse, RpcMessage, RpcRequest, RpcResponse, to_rpc_err},
 };
 
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-pub trait Transport<E: ApiError> {
-    async fn call(&self, method: &str, params: Value) -> Result<RpcResponse, E>;
-}
-
 /// Single-threaded, concurrent-safe json-rpc transport layer
-pub struct JsonRpcTransport {
-    id: AtomicU64,
-    pending: Mutex<HashMap<u64, Sender<RpcResponse>>>,
-    reader: Mutex<Box<dyn BufRead + Send + Sync>>,
-    writer: Mutex<Box<dyn Write + Send + Sync>>,
-    handler: Option<Box<dyn RequestHandler<RpcError>>>,
+#[derive(Clone)]
+pub struct Transport {
+    id: Arc<AtomicU64>,
+    reader: Arc<Mutex<Box<dyn BufRead + Send + Sync>>>,
+    writer: Arc<Mutex<Box<dyn Write + Send + Sync>>>,
+
+    pending: Arc<Mutex<HashMap<u64, Result<RpcResponse, RpcErrorResponse>>>>,
 }
 
-const JSON_RPC_VERSION: &str = "2.0";
-
-impl JsonRpcTransport {
+impl Transport {
     pub fn new(
-        reader: impl BufRead + Send + Sync + 'static,
+        reader: impl Read + Send + Sync + 'static,
         writer: impl Write + Send + Sync + 'static,
     ) -> Self {
         Self {
-            id: AtomicU64::new(0),
-            pending: Mutex::new(HashMap::new()),
-            reader: Mutex::new(Box::new(reader)),
-            writer: Mutex::new(Box::new(writer)),
-            handler: None,
-        }
-    }
-
-    pub fn with_handler(
-        reader: impl BufRead + Send + Sync + 'static,
-        writer: impl Write + Send + Sync + 'static,
-        handler: impl RequestHandler<RpcError> + 'static,
-    ) -> Self {
-        Self {
-            id: AtomicU64::new(0),
-            pending: Mutex::new(HashMap::new()),
-            reader: Mutex::new(Box::new(reader)),
-            writer: Mutex::new(Box::new(writer)),
-            handler: Some(Box::new(handler)),
+            id: Arc::new(AtomicU64::new(0)),
+            pending: Arc::new(Mutex::new(HashMap::new())),
+            reader: Arc::new(Mutex::new(Box::new(BufReader::new(reader)))),
+            writer: Arc::new(Mutex::new(Box::new(writer))),
         }
     }
 }
 
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-impl Transport<RpcError> for JsonRpcTransport {
-    /// Sends a json-rpc request and waits for the response. `Call` does not
-    /// pump the reader, so you must call `process_next_line` in another task
-    /// to read responses / handle incoming requests.
-    async fn call(&self, method: &str, params: Value) -> Result<RpcResponse, RpcError> {
-        let (tx, mut rx) = oneshot::channel();
-        let id = self.id.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        self.pending.lock().await.insert(id, tx);
-        self.write_request(id, method, params).await?;
+impl Transport {
+    /// Send a single call and wait for the response.
+    pub fn call(&self, method: &str, params: Value) -> Result<RpcResponse, RpcError> {
+        let responses = self.call_many(std::iter::once((method, params)))?;
+        let resp = responses
+            .into_iter()
+            .next()
+            .ok_or(RpcError::custom("Response does not exist"))?;
 
-        //? Loop handles all incoming messages until we get a response for our call
-        loop {
-            match rx.try_recv() {
-                Ok(Some(msg)) => {
-                    return Ok(msg);
-                }
-                Ok(None) => {}
-                Err(_) => {
-                    warn!("Caller dropped");
-                    return Err(RpcError::InternalError);
+        Ok(resp)
+    }
+
+    /// Send multiple calls and wait for all responses. This allows async-like
+    /// behavior because the host will process requests concurrently.
+    ///
+    /// The order of responses matches the order of requests. If any call fails,
+    /// the entire batch will fail.
+    pub fn call_many<I, S>(&self, calls: I) -> Result<Vec<RpcResponse>, RpcError>
+    where
+        I: IntoIterator<Item = (S, Value)>,
+        S: Into<String>,
+    {
+        let ids: Result<Vec<u64>, RpcError> = calls
+            .into_iter()
+            .map(|(method, params)| {
+                let id = self.next_id();
+                self.write(id, &method.into(), params)?;
+                Ok(id)
+            })
+            .collect();
+        let ids = ids?;
+
+        let mut results = Vec::with_capacity(ids.len());
+        let mut remaining: HashSet<u64> = ids.iter().copied().collect();
+
+        while !remaining.is_empty() {
+            let message = self.read()?;
+            self.insert_response(message);
+
+            //? Retrieve any fulfilled requests
+            let mut fulfilled = Vec::new();
+            for &id in &remaining {
+                if let Some(result) = self.pending.lock().unwrap().remove(&id) {
+                    results.push(result.map_err(|e| to_rpc_err(e.error))?);
+                    fulfilled.push(id);
                 }
             }
 
-            self.process_next_line(self.handler.as_deref()).await?;
+            for id in fulfilled {
+                remaining.remove(&id);
+            }
         }
-    }
-}
 
-impl JsonRpcTransport {
-    /// Processes a single request from the reader.  Can be used to manually
-    /// pump the reader with a custom handler.
-    pub async fn process_next_line(
-        &self,
-        handler: Option<&dyn RequestHandler<RpcError>>,
-    ) -> Result<(), RpcError> {
-        let line: String = self.next_line().await?;
-        let message = match serde_json::from_str::<RpcMessage>(line.trim()) {
-            Ok(msg) => msg,
-            Err(_) => {
-                warn!("Failed to parse line: {}", line.trim());
-                return Err(RpcError::ParseError);
-            }
-        };
+        results.sort_by_key(|r| r.id);
 
-        trace!("JsonRpcTransport::process_next_line() - {:?}", message);
-
-        self.process_message(message, handler).await
+        Ok(results)
     }
 
-    async fn write_request(&self, id: u64, method: &str, params: Value) -> Result<(), RpcError> {
-        let msg = RpcMessage::RpcRequest(RpcRequest {
-            jsonrpc: JSON_RPC_VERSION.to_string(),
+    fn write(&self, id: u64, method: &str, params: Value) -> Result<(), RpcError> {
+        let request = RpcMessage::RpcRequest(crate::rpc_message::RpcRequest {
+            jsonrpc: "2.0".into(),
             id,
-            method: method.to_string(),
+            method: method.into(),
             params,
         });
-        self.write_message(&msg).await?;
-        Ok(())
+
+        self.write_message(&request)
     }
 
-    async fn write_message(&self, msg: &RpcMessage) -> Result<(), RpcError> {
-        let serialized = serde_json::to_string(msg).map_err(|_| {
-            warn!("Failed to serialize message: {:?}", msg);
-            RpcError::InternalError
-        })?;
-        let msg = format!("{}\n", serialized);
-
-        trace!("JsonRpcTransport::write_message() - {}", msg.trim());
-        let mut writer = self.writer.lock().await;
-        writer.write_all(msg.as_bytes()).map_err(|_| {
-            warn!("Failed to write message: {}", msg.trim());
-            RpcError::InternalError
-        })?;
-        writer.flush().map_err(|_| {
-            warn!("Failed to flush message: {}", msg.trim());
-            RpcError::InternalError
-        })?;
-        Ok(())
-    }
-
-    async fn process_message(
-        &self,
-        message: RpcMessage,
-        handler: Option<&dyn RequestHandler<RpcError>>,
-    ) -> Result<(), RpcError> {
-        match message.clone() {
-            RpcMessage::RpcResponse(resp) => {
-                if let Some(tx) = self.pending.lock().await.remove(&resp.id) {
-                    let _ = tx.send(resp);
-                }
-            }
-            RpcMessage::RpcErrorResponse(err) => {
-                warn!("Received error response: {:?}", err.error.message());
-                return Err(err.error);
-            }
-            RpcMessage::RpcRequest(RpcRequest {
-                jsonrpc: _,
-                id,
-                method,
-                params,
-            }) => {
-                let handler = handler.ok_or(RpcError::Custom("Handler not found".into()))?;
-                match handler.handle(&method, params).await {
-                    Ok(result) => {
-                        let response = RpcMessage::RpcResponse(RpcResponse {
-                            jsonrpc: JSON_RPC_VERSION.to_string(),
-                            id,
-                            result,
-                        });
-                        self.write_message(&response).await?;
-                    }
-                    Err(error) => {
-                        let response = RpcMessage::RpcErrorResponse(RpcErrorResponse {
-                            jsonrpc: JSON_RPC_VERSION.to_string(),
-                            id,
-                            error,
-                        });
-                        self.write_message(&response).await?;
-                    }
-                }
-            }
+    fn write_message(&self, message: &RpcMessage) -> Result<(), RpcError> {
+        let message_str = serde_json::to_string(message).map_err(to_rpc_err)?;
+        let msg = format!("{}\n", message_str);
+        {
+            let mut writer = self.writer.lock().unwrap();
+            writer.write_all(msg.as_bytes()).map_err(to_rpc_err)?;
+            writer.flush().map_err(to_rpc_err)?;
         }
 
         Ok(())
     }
 
-    async fn next_line(&self) -> Result<String, RpcError> {
+    /// Blocking read of a single message
+    fn read(&self) -> Result<RpcMessage, RpcError> {
         let mut line = String::new();
 
-        // Loop until we get a line, awaiting if we would block
-        //? Uses a loop here instead of an async reader since need this to
-        //? also work in the plugin wasi environment. There it'll receive the
-        //? `WouldBlock` error from the host's non-blocking pipe, but since
-        //? it's just getting that through stdio it can't be async. And using
-        //? async stdio won't work well because wasi.
+        //? Loop until we successfully read a line or hit EOF, continuing on WouldBlock
+        //? errors.
         loop {
-            match self.reader.lock().await.read_line(&mut line) {
-                Ok(0) => {
-                    warn!("EOF reached while reading line");
-                    return Err(RpcError::InternalError);
+            let res = self.reader.lock().unwrap().read_line(&mut line);
+            match res {
+                Ok(0) => return Err(RpcError::custom("EOF reached while reading from transport")),
+                Ok(_) => break,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    continue;
                 }
-                Ok(_) => return Ok(line),
-                Err(e) => match e.kind() {
-                    std::io::ErrorKind::WouldBlock => {
-                        yield_now().await;
-                        continue;
-                    }
-                    _ => {
-                        warn!("Failed to read line: {}", e);
-                        return Err(RpcError::InternalError);
-                    }
-                },
+                Err(e) => {
+                    return Err(RpcError::custom(&format!(
+                        "Failed to read from transport: {}",
+                        e
+                    )));
+                }
             }
         }
+
+        Ok(serde_json::from_str(&line).map_err(to_rpc_err)?)
+    }
+
+    /// Inserts a response message into the pending map. If the message is a request,
+    /// it is ignored.
+    fn insert_response(&self, message: RpcMessage) {
+        match message {
+            RpcMessage::RpcResponse(resp) => {
+                self.pending.lock().unwrap().insert(resp.id, Ok(resp));
+            }
+            RpcMessage::RpcErrorResponse(err_resp) => {
+                self.pending
+                    .lock()
+                    .unwrap()
+                    .insert(err_resp.id, Err(err_resp));
+            }
+            RpcMessage::RpcRequest(_) => {
+                info!("Ignoring request message");
+            }
+        }
+    }
+
+    fn next_id(&self) -> u64 {
+        self.id.fetch_add(1, Ordering::Relaxed)
     }
 }
 
-#[cfg(test)]
-mod test {
-    use super::*;
-    use futures::executor::block_on;
-    use std::{
-        io::{BufReader, Cursor},
-        sync::Arc,
-    };
-
-    struct MockWriter {
-        buffer: Arc<Mutex<Vec<u8>>>,
+impl Transport {
+    /// Asynchronously send a single call and wait for the response. This allows
+    /// other async tasks to run while waiting for the response.
+    pub async fn async_call(&self, method: &str, params: Value) -> Result<RpcResponse, RpcError> {
+        self.async_call_impl(method, params, None).await
     }
 
-    impl MockWriter {
-        fn new(buffer: Arc<Mutex<Vec<u8>>>) -> Self {
-            Self { buffer }
+    /// Asynchronously send a single call and wait for the response, while also handling
+    /// incoming requests using the provided handler.
+    ///
+    /// Used primarily by hosts to handle requests from guests while waiting for responses.
+    ///
+    /// ```text
+    /// host   ->   guest: balance()
+    ///   host <-   guest: balanceOf(1)
+    ///   host  ->> guest: 42
+    ///   host <-   guest: balanceOf(2)
+    ///   host  ->> guest: 100
+    /// host   <<-  guest: (42, 100)
+    /// ```
+    pub async fn async_call_with_handler(
+        &self,
+        method: &str,
+        params: Value,
+        handler: &dyn RequestHandler<RpcError>,
+    ) -> Result<RpcResponse, RpcError> {
+        self.async_call_impl(method, params, Some(handler)).await
+    }
+
+    async fn async_call_impl(
+        &self,
+        method: &str,
+        params: Value,
+        handler: Option<&dyn RequestHandler<RpcError>>,
+    ) -> Result<RpcResponse, RpcError> {
+        let id = self.next_id();
+        self.write(id, method, params)?;
+
+        loop {
+            let message = self.async_read().await?;
+            match message {
+                RpcMessage::RpcRequest(RpcRequest {
+                    id, method, params, ..
+                }) => {
+                    let Some(handler) = handler else {
+                        info!("Ignoring request message as no handler is provided");
+                        continue;
+                    };
+
+                    match handler.handle(&method, params).await {
+                        Ok(result) => {
+                            self.write_message(&RpcMessage::response(id, result))?;
+                        }
+                        Err(error) => {
+                            self.write_message(&RpcMessage::error_response(id, error))?;
+                        }
+                    }
+                }
+                _ => self.insert_response(message),
+            }
+
+            //? If our request has been fulfilled, return the result
+            if let Some(result) = self.pending.lock().unwrap().remove(&id) {
+                return result.map_err(|e| to_rpc_err(e.error));
+            }
         }
     }
 
-    impl Write for MockWriter {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            block_on(async {
-                self.buffer.lock().await.extend_from_slice(buf);
-            });
-            Ok(buf.len())
+    /// Async read of a single message, yielding when the reader would block
+    async fn async_read(&self) -> Result<RpcMessage, RpcError> {
+        let mut line = String::new();
+
+        loop {
+            let res = self.reader.lock().unwrap().read_line(&mut line);
+            match res {
+                Ok(0) => return Err(RpcError::custom("EOF reached while reading from transport")),
+                Ok(_) => break,
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    yield_now().await;
+                    continue;
+                }
+                Err(e) => {
+                    return Err(RpcError::custom(&format!(
+                        "Failed to read from transport: {}",
+                        e
+                    )));
+                }
+            }
         }
 
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    #[tokio::test]
-    async fn test_response_received_and_pending_removed() {
-        let response = RpcResponse {
-            jsonrpc: "2.0".into(),
-            id: 42,
-            result: serde_json::json!({"success": true}),
-        };
-        let response_json = serde_json::to_string(&response).unwrap();
-
-        let reader = BufReader::new(Cursor::new(format!("{}\n", response_json)));
-        let output_buffer = Arc::new(Mutex::new(Vec::new()));
-        let writer = MockWriter::new(output_buffer);
-        let transport = JsonRpcTransport::new(reader, writer);
-
-        // Inject a fake pending request with the ID and a rx we control
-        let (tx, mut rx) = oneshot::channel();
-        transport.pending.lock().await.insert(42, tx);
-
-        // Process the next line containing our expected response
-        transport.process_next_line(None).await.unwrap();
-
-        assert!(!transport.pending.lock().await.contains_key(&42));
-        assert_eq!(rx.try_recv().unwrap().unwrap(), response);
+        Ok(serde_json::from_str(&line).map_err(to_rpc_err)?)
     }
 }

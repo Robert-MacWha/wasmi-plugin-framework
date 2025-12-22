@@ -1,8 +1,9 @@
+use futures::future::BoxFuture;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use wasmi_plugin_pdk::{
+    router::{MaybeSend, Router},
     rpc_message::RpcError,
-    server::{BoxFuture, MaybeSend, Router},
 };
 
 use crate::{host_handler::HostHandler, plugin::PluginId};

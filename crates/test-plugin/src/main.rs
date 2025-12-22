@@ -1,25 +1,21 @@
 use rand::Rng;
 use serde_json::{self, Value};
-use std::{io::stderr, sync::Arc};
+use std::io::stderr;
 use tracing::{error, info, level_filters::LevelFilter};
 use tracing_subscriber::fmt;
-use wasmi_plugin_pdk::{
-    rpc_message::RpcError,
-    server::PluginServer,
-    transport::{JsonRpcTransport, Transport},
-};
+use wasmi_plugin_pdk::{rpc_message::RpcError, server::PluginServer, transport::Transport};
 
-async fn ping(_: Arc<JsonRpcTransport>, _: ()) -> Result<Value, RpcError> {
+async fn ping(_: Transport, _: ()) -> Result<Value, RpcError> {
     Ok(Value::String("pong".to_string()))
 }
 
-async fn get_random_number(_: Arc<JsonRpcTransport>, _: ()) -> Result<Value, RpcError> {
+async fn get_random_number(_: Transport, _: ()) -> Result<Value, RpcError> {
     let mut rng = rand::rng();
     let random_number: u64 = rng.random();
     Ok(Value::Number(random_number.into()))
 }
 
-async fn get_time(_: Arc<JsonRpcTransport>, _: ()) -> Result<Value, RpcError> {
+async fn get_time(_: Transport, _: ()) -> Result<Value, RpcError> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|e| {
@@ -29,32 +25,50 @@ async fn get_time(_: Arc<JsonRpcTransport>, _: ()) -> Result<Value, RpcError> {
     Ok(Value::Number(now.as_secs().into()))
 }
 
-async fn sleep(_: Arc<JsonRpcTransport>, duration_ms: u64) -> Result<(), RpcError> {
+async fn sleep(_: Transport, duration_ms: u64) -> Result<(), RpcError> {
     info!("Sleeping for {} milliseconds", duration_ms);
-    tokio::time::sleep(std::time::Duration::from_millis(duration_ms)).await;
+    std::thread::sleep(std::time::Duration::from_millis(duration_ms));
     info!("Woke up after sleeping for {} milliseconds", duration_ms);
     Ok(())
 }
 
-async fn many_echo(transport: Arc<JsonRpcTransport>, limit: u64) -> Result<(), RpcError> {
-    for i in 0..limit {
-        let resp = transport.call("echo", Value::Number(i.into())).await?;
+async fn tokio_sleep(_: Transport, duration_ms: u64) -> Result<(), RpcError> {
+    info!("Sleeping (async) for {} milliseconds", duration_ms);
+    tokio::time::sleep(std::time::Duration::from_millis(duration_ms)).await;
+    info!(
+        "Woke up after sleeping (async) for {} milliseconds",
+        duration_ms
+    );
+    Ok(())
+}
 
-        if resp.id != i {
-            error!("Incorrect response id: expected {}, got {}", i, resp.id);
-            return Err(RpcError::InternalError);
-        }
+async fn call(transport: Transport, _: ()) -> Result<Value, RpcError> {
+    let resp = transport.call("ping", Value::Null)?;
+    Ok(resp.result)
+}
 
-        if resp.result != Value::Number(i.into()) {
-            error!("Incorrect response result: {:?}", resp.result);
-            return Err(RpcError::InternalError);
-        }
+async fn call_many(transport: Transport, limit: u64) -> Result<(), RpcError> {
+    let calls = (0..limit).map(|_| ("ping", Value::Null));
+    let resp = transport.call_many(calls)?;
+
+    if resp.len() as u64 != limit {
+        error!(
+            "Incorrect number of responses: expected {}, got {}",
+            limit,
+            resp.len()
+        );
+        return Err(RpcError::InternalError);
     }
 
     Ok(())
 }
 
-async fn prime_sieve(_transport: Arc<JsonRpcTransport>, limit: u64) -> Result<Value, RpcError> {
+async fn async_call(transport: Transport, _: ()) -> Result<Value, RpcError> {
+    let resp = transport.async_call("ping", Value::Null).await?;
+    Ok(resp.result)
+}
+
+async fn prime_sieve(_transport: Transport, limit: u64) -> Result<Value, RpcError> {
     let limit = limit as usize;
     let primes = sieve_of_eratosthenes(limit);
     info!("Generated {} primes up to {}", primes.len(), limit);
@@ -94,12 +108,15 @@ fn main() {
         .init();
     info!("Starting plugin...");
 
-    PluginServer::new_with_transport()
+    PluginServer::new()
         .with_method("ping", ping)
         .with_method("get_random_number", get_random_number)
         .with_method("get_time", get_time)
         .with_method("sleep", sleep)
-        .with_method("many_echo", many_echo)
+        .with_method("tokio_sleep", tokio_sleep)
+        .with_method("call", call)
+        .with_method("call_many", call_many)
+        .with_method("async_call", async_call)
         .with_method("prime_sieve", prime_sieve)
         .run();
 }
