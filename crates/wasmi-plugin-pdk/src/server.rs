@@ -29,6 +29,9 @@ enum PluginServerError {
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+
+    #[error("RPC error: {0}")]
+    Rpc(#[from] RpcError),
 }
 
 impl PluginServer {
@@ -60,19 +63,14 @@ impl PluginServer {
 
     fn try_run(&self) -> Result<(), PluginServerError> {
         //? Read request
-        let mut line = String::new();
-        std::io::stdin()
-            .read_line(&mut line)
-            .map_err(|_| PluginServerError::MissingRequest)?;
-
-        let message: RpcMessage = serde_json::from_str(&line)?;
-        let RpcMessage::RpcRequest(request) = message else {
-            return Err(PluginServerError::InvalidMessage(message));
+        let transport = Transport::new(std::io::stdin(), std::io::stdout());
+        let request = transport.read()?;
+        let RpcMessage::RpcRequest(request) = request else {
+            return Err(PluginServerError::InvalidMessage(request));
         };
 
         info!("PluginServer: Received request: {:?}", request);
 
-        let transport = Transport::new(std::io::stdin(), std::io::stdout());
         let resp = futures::executor::block_on(async move {
             self.router
                 .handle_with_state(transport, &request.method, request.params)

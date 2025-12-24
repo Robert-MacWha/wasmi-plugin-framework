@@ -31,7 +31,7 @@ pub enum NativeBridgeError {
 
 impl NativeBridge {
     pub fn new(
-        compiled: &Compiled,
+        compiled: Compiled,
         _wasm_bytes: &[u8],
     ) -> Result<
         (
@@ -46,7 +46,6 @@ impl NativeBridge {
         let (stdout_reader, stdout_writer) = non_blocking_pipe();
         let (stderr_reader, stderr_writer) = non_blocking_pipe();
 
-        let compiled = compiled.clone();
         let wasm_handle = spawn_blocking(move || {
             let result = Self::run_instance(compiled, stdin_reader, stdout_writer, stderr_writer);
             if let Err(e) = result {

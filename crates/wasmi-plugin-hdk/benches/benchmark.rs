@@ -3,6 +3,7 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use serde_json::Value;
 use std::sync::Arc;
 use tokio::runtime::Builder;
+use tracing_subscriber::EnvFilter;
 use wasmi_plugin_hdk::{
     plugin::{Plugin, PluginId},
     server::HostServer,
@@ -25,6 +26,11 @@ fn get_host_server() -> HostServer<(Option<PluginId>, ())> {
 
 /// Benchmark a single ping request to the wasm module.
 pub fn bench_ping(c: &mut Criterion) {
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env())
+        .with_test_writer()
+        .init();
+
     let rt = Builder::new_current_thread().enable_all().build().unwrap();
 
     let wasm_bytes = load_plugin_wasm();

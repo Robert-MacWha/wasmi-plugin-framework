@@ -44,7 +44,7 @@ unsafe impl Sync for WorkerBridge {}
 
 impl WorkerBridge {
     pub fn new(
-        compiled: &Compiled,
+        compiled: Compiled,
         wasm_bytes: &[u8],
     ) -> Result<
         (
@@ -54,7 +54,7 @@ impl WorkerBridge {
         ),
         WorkerBridgeError,
     > {
-        let name = compiled.name.clone();
+        let name = compiled.name;
         info!("Creating WorkerBridge for plugin: {}", &name);
 
         let (ready_tx, ready_rx) = futures::channel::oneshot::channel::<()>();

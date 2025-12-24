@@ -176,8 +176,9 @@ impl Plugin {
         ),
         PluginError,
     > {
-        let (bridge, stdin, stdout) = bridge::NativeBridge::new(&self.compiled, &self.wasm_bytes)
-            .map_err(|_| PluginError::PluginDied)?;
+        let (bridge, stdin, stdout) =
+            bridge::NativeBridge::new(self.compiled.clone(), &self.wasm_bytes)
+                .map_err(|_| PluginError::PluginDied)?;
         Ok((Box::new(bridge), Box::new(stdin), Box::new(stdout)))
     }
 
@@ -192,9 +193,9 @@ impl Plugin {
         ),
         PluginError,
     > {
-        // Web uses the bytes to send to the Worker
-        let (bridge, stdin, stdout) = bridge::WorkerBridge::new(&self.compiled, &self.wasm_bytes)
-            .map_err(|_| PluginError::PluginDied)?;
+        let (bridge, stdin, stdout) =
+            bridge::WorkerBridge::new(self.compiled.clone(), &self.wasm_bytes)
+                .map_err(|_| PluginError::PluginDied)?;
         Ok((Box::new(bridge), Box::new(stdin), Box::new(stdout)))
     }
 }

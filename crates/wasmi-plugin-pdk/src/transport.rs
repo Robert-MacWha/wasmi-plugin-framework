@@ -128,7 +128,7 @@ impl Transport {
     }
 
     /// Blocking read of a single message
-    fn read(&self) -> Result<RpcMessage, RpcError> {
+    pub fn read(&self) -> Result<RpcMessage, RpcError> {
         let mut line = String::new();
 
         //? Loop until we successfully read a line or hit EOF, continuing on WouldBlock
