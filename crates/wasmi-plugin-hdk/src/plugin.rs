@@ -16,8 +16,6 @@ use wasmi_plugin_pdk::{
 
 use crate::bridge::{self, Bridge};
 use crate::compile::Compiled;
-#[cfg(not(target_arch = "wasm32"))]
-use crate::compile::Compiled;
 use crate::host_handler::HostHandler;
 use crate::time::sleep;
 
@@ -61,9 +59,11 @@ pub struct Plugin {
     id: PluginId,
     handler: Arc<dyn HostHandler>,
     logger: Logger,
-    max_fuel: Option<u64>,
     compiled: Compiled,
     wasm_bytes: Vec<u8>,
+    #[allow(dead_code)]
+    // TODO: Use fuel to terminate native plugins
+    max_fuel: Option<u64>,
 }
 
 #[derive(Debug, Error)]
@@ -176,7 +176,7 @@ impl Plugin {
         ),
         PluginError,
     > {
-        let (bridge, stdin, stdout) = bridge::NativeBridge::new(self.compiled.clone())
+        let (bridge, stdin, stdout) = bridge::NativeBridge::new(&self.compiled, &self.wasm_bytes)
             .map_err(|_| PluginError::PluginDied)?;
         Ok((Box::new(bridge), Box::new(stdin), Box::new(stdout)))
     }
@@ -193,9 +193,8 @@ impl Plugin {
         PluginError,
     > {
         // Web uses the bytes to send to the Worker
-        let (bridge, stdin, stdout) =
-            bridge::WorkerBridge::new(&self.compiled.name, &self.wasm_bytes)
-                .map_err(|_| PluginError::PluginDied)?;
+        let (bridge, stdin, stdout) = bridge::WorkerBridge::new(&self.compiled, &self.wasm_bytes)
+            .map_err(|_| PluginError::PluginDied)?;
         Ok((Box::new(bridge), Box::new(stdin), Box::new(stdout)))
     }
 }

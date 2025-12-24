@@ -15,6 +15,7 @@ use web_sys::wasm_bindgen::{JsCast, JsValue};
 use crate::bridge::Bridge;
 use crate::bridge::shared_pipe::SharedPipe;
 use crate::bridge::worker_protocol::WorkerMessage;
+use crate::compile::Compiled;
 
 pub struct WorkerBridge {
     worker: SendWorker,
@@ -43,7 +44,7 @@ unsafe impl Sync for WorkerBridge {}
 
 impl WorkerBridge {
     pub fn new(
-        name: &str,
+        compiled: &Compiled,
         wasm_bytes: &[u8],
     ) -> Result<
         (
@@ -53,6 +54,7 @@ impl WorkerBridge {
         ),
         WorkerBridgeError,
     > {
+        let name = compiled.name.clone();
         info!("Creating WorkerBridge for plugin: {}", &name);
 
         let (ready_tx, ready_rx) = futures::channel::oneshot::channel::<()>();
@@ -96,7 +98,6 @@ impl WorkerBridge {
         });
 
         //? Log messages from stderr as plugin logs
-        let name = name.to_string();
         spawn_local(async move {
             let mut stderr = BufReader::new(stderr);
             let mut buffer = String::new();

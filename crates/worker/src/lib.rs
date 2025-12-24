@@ -1,11 +1,12 @@
+#![cfg(target_arch = "wasm32")]
+
 use thiserror::Error;
 use wasm_bindgen::{
     JsCast, JsValue,
     prelude::{Closure, wasm_bindgen},
 };
 use wasmi_plugin_hdk::{
-    WorkerMessage,
-    bridge::shared_pipe::SharedPipe,
+    bridge::{shared_pipe::SharedPipe, worker_protocol::WorkerMessage},
     wasi::wasi_ctx::{self, WasiCtx},
 };
 use web_sys::{
