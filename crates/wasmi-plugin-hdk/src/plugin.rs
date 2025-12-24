@@ -156,15 +156,16 @@ impl Plugin {
         futures::select! {
             res = transport_task => {
                 bridge.terminate();
-                return Ok(res?);
+                Ok(res?)
             },
             _ = timeout => {
                 bridge.terminate();
-                return Err(PluginError::PluginDied);
+                Err(PluginError::PluginDied)
             }
-        };
+        }
     }
 
+    #[allow(clippy::type_complexity)]
     #[cfg(not(target_arch = "wasm32"))]
     fn create_bridge(
         &self,
@@ -182,6 +183,7 @@ impl Plugin {
         Ok((Box::new(bridge), Box::new(stdin), Box::new(stdout)))
     }
 
+    #[allow(clippy::type_complexity)]
     #[cfg(target_arch = "wasm32")]
     fn create_bridge(
         &self,

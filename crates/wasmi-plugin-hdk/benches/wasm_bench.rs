@@ -1,3 +1,4 @@
+#![cfg(target_arch = "wasm32")]
 use serde_json::Value;
 use std::sync::Arc;
 use wasm_bindgen_test::{Criterion, wasm_bindgen_bench};

@@ -31,6 +31,7 @@ enum PluginServerError {
     Rpc(#[from] RpcError),
 }
 
+#[allow(clippy::new_without_default)]
 impl PluginServer {
     pub fn new() -> Self {
         let router = Router::new();

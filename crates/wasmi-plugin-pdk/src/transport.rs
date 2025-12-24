@@ -142,7 +142,7 @@ impl Transport {
                     continue;
                 }
                 Err(e) => {
-                    return Err(RpcError::custom(&format!(
+                    return Err(RpcError::custom(format!(
                         "Failed to read from transport: {}",
                         e
                     )));
@@ -150,7 +150,7 @@ impl Transport {
             }
         }
 
-        Ok(serde_json::from_str(&line).map_err(to_rpc_err)?)
+        serde_json::from_str(&line).map_err(to_rpc_err)
     }
 
     /// Inserts a response message into the pending map. If the message is a request,
@@ -259,7 +259,7 @@ impl Transport {
                     continue;
                 }
                 Err(e) => {
-                    return Err(RpcError::custom(&format!(
+                    return Err(RpcError::custom(format!(
                         "Failed to read from transport: {}",
                         e
                     )));
@@ -267,6 +267,6 @@ impl Transport {
             }
         }
 
-        Ok(serde_json::from_str(&line).map_err(to_rpc_err)?)
+        serde_json::from_str(&line).map_err(to_rpc_err)
     }
 }

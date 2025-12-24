@@ -90,6 +90,7 @@ impl WasiCtx {
         self
     }
 
+    #[allow(clippy::result_large_err)]
     pub fn into_fn(
         self,
         mut store: &mut wasmer::Store,
@@ -115,7 +116,7 @@ impl WasiCtx {
             }
         };
 
-        let instance = wasmer::Instance::new(&mut store, &module, &imports)?;
+        let instance = wasmer::Instance::new(&mut store, module, &imports)?;
         let memory = instance.exports.get_memory("memory")?;
         ctx.as_mut(&mut store).set_memory(memory.clone());
 

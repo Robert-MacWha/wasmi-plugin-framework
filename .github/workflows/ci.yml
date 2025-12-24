@@ -14,72 +14,33 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
+    - name: Install Nix
+      uses: DeterminateSystems/nix-installer-action@v14
+    - name: Magic Nix Cache
+      uses: DeterminateSystems/magic-nix-cache-action@v8
 
-    - uses: dtolnay/rust-toolchain@stable
-      with:
-        targets: wasm32-wasip1
-
-    - uses: Swatinem/rust-cache@v2
-
-    - name: Build plugin
-      run: cargo build --target wasm32-wasip1 -p test-plugin --release
-
-    - name: Optimize Wasm
-      uses: NiklasEi/wasm-opt-action@v2
-      with:
-        file: target/wasm32-wasip1/release/*.wasm
-        optimize_all: true
-        options: -O3
-
-    - run: cargo build
-    - run: cargo test
-    - run: cargo bench
+    - run: nix-shell --run "make test-native"
+    - run: nix-shell --run "make bench-native"
 
   test-wasm:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
+    - name: Install Nix
+      uses: DeterminateSystems/nix-installer-action@v14
+    - name: Magic Nix Cache
+      uses: DeterminateSystems/magic-nix-cache-action@v8
 
-    - uses: dtolnay/rust-toolchain@stable
-      with:
-        targets: wasm32-wasip1, wasm32-unknown-unknown
-
-    - uses: Swatinem/rust-cache@v2
-
-    - name: Build plugin
-      run: cargo build --target wasm32-wasip1 -p test-plugin --release
-
-    - name: Optimize Wasm
-      uses: NiklasEi/wasm-opt-action@v2
-      with:
-        file: target/wasm32-wasip1/release/*.wasm
-        optimize_all: true
-        options: -O3
-
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '20'
-
-    - uses: jetli/wasm-bindgen-action@v0.2.0
-
-    - run: cargo build
-    - run: cargo test
-    - run: cargo bench
+    - run: nix-shell --run "make test-wasm"
+    - run: nix-shell --run "make bench-wasm"
   
   clippy:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
+    - name: Install Nix
+      uses: DeterminateSystems/nix-installer-action@v14
+    - name: Magic Nix Cache
+      uses: DeterminateSystems/magic-nix-cache-action@v8
 
-    - uses: dtolnay/rust-toolchain@stable
-      with:
-        targets: wasm32-wasip1
-
-    - uses: Swatinem/rust-cache@v2
-
-    - name: Build plugin
-      run: cargo build --target wasm32-wasip1 -p test-plugin --release
-
-    - name: Run Clippy
-      run: cargo clippy --workspace --all-targets -- -D warnings
+    - run: nix-shell --run "make clippy"

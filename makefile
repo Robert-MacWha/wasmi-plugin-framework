@@ -22,9 +22,24 @@ build-worker:
 
 build-all: build-plugin build-worker
 
+clippy: build-all
+	@echo "--- Running Clippy Lints ---"
+	cargo clippy -- -D warnings
+
+test-native: build-plugin
+	@echo "--- Running Plugin Tests ---"
+	cargo test
+
+bench-native: build-plugin
+	@echo "--- Running Plugin Benchmarks ---"
+	cargo bench
+
+test-wasm: build-all
+	@echo "--- Running Wasm Tests ---"
+	@cd $(HDK_PATH) && \
+	cargo test -p wasmi-plugin-hdk --target wasm32-unknown-unknown
+
 bench-wasm: build-all
 	@echo "--- Running Wasm Benchmarks ---"
 	@cd $(HDK_PATH) && \
-	export WASM_BINDGEN_TEST_TIMEOUT=300 && \
-	CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER=wasm-bindgen-test-runner && \
 	cargo bench -p wasmi-plugin-hdk --target wasm32-unknown-unknown
