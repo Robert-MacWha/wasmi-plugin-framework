@@ -53,8 +53,8 @@ async fn call_many(transport: Transport, limit: u64) -> Result<(), RpcError> {
     Ok(())
 }
 
-async fn async_call(transport: Transport, _: ()) -> Result<Value, RpcError> {
-    let resp = transport.async_call("ping", Value::Null).await?;
+async fn call_async(transport: Transport, _: ()) -> Result<Value, RpcError> {
+    let resp = transport.call_async("ping", Value::Null).await?;
     Ok(resp.result)
 }
 
@@ -105,7 +105,7 @@ fn main() {
         .with_method("sleep", sleep)
         .with_method("call", call)
         .with_method("call_many", call_many)
-        .with_method("async_call", async_call)
+        .with_method("call_async", call_async)
         .with_method("prime_sieve", prime_sieve)
         .run();
 }

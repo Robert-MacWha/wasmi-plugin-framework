@@ -156,15 +156,15 @@ async fn test_call_many() {
 
 #[cfg_attr(target_family = "wasm", wasm_bindgen_test)]
 #[cfg_attr(not(target_family = "wasm"), tokio::test)]
-async fn test_async_call() {
+async fn test_call_async() {
     setup_logs();
-    info!("Starting async_call test...");
+    info!("Starting call_async test...");
 
     let wasm_bytes = load_plugin_wasm();
     let handler = Arc::new(get_host_server());
 
     let plugin = Plugin::new("test_plugin", wasm_bytes, handler).unwrap();
-    let resp = plugin.call("async_call", Value::Null).await.unwrap();
+    let resp = plugin.call("call_async", Value::Null).await.unwrap();
     assert_eq!(resp.result.as_str().unwrap(), "pong");
 }
 

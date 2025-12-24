@@ -1,12 +1,13 @@
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 
+use futures::{FutureExt, select};
 use serde::{Serialize, de::DeserializeOwned};
 use thiserror::Error;
 use tracing::info;
 
 use crate::{
     router::{MaybeSend, Router},
-    rpc_message::{RpcError, RpcMessage},
+    rpc_message::{RpcError, RpcMessage, RpcRequest},
     transport::Transport,
 };
 
@@ -61,18 +62,19 @@ impl PluginServer {
 
     fn try_run(&self) -> Result<(), PluginServerError> {
         //? Read request
-        let transport = Transport::new(std::io::stdin(), std::io::stdout());
-        let request = transport.read()?;
-        let RpcMessage::RpcRequest(request) = request else {
-            return Err(PluginServerError::InvalidMessage(request));
-        };
-
+        let request = self.read_request()?;
         info!("PluginServer: Received request: {:?}", request);
 
+        let (transport, driver) = Transport::new(std::io::stdin(), std::io::stdout());
         let resp = futures::executor::block_on(async move {
-            self.router
-                .handle_with_state(transport, &request.method, request.params)
-                .await
+            select! {
+                res = self.router.handle_with_state(transport, &request.method, request.params).fuse() => {
+                    res
+                },
+                drive_err = driver.run().fuse() => {
+                    panic!("Transport driver exited unexpectedly: {:?}", drive_err);
+                }
+            }
         });
 
         //? Send response
@@ -88,5 +90,16 @@ impl PluginServer {
         std::io::stdout().flush()?;
 
         Ok(())
+    }
+
+    fn read_request(&self) -> Result<RpcRequest, PluginServerError> {
+        let mut reader = BufReader::new(std::io::stdin());
+        let mut line = String::new();
+        reader.read_line(&mut line)?;
+        let msg: RpcMessage = serde_json::from_str(&line)?;
+        let RpcMessage::RpcRequest(msg) = msg else {
+            return Err(PluginServerError::InvalidMessage(msg));
+        };
+        Ok(msg)
     }
 }
