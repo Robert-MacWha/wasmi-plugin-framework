@@ -32,16 +32,6 @@ async fn sleep(_: Transport, duration_ms: u64) -> Result<(), RpcError> {
     Ok(())
 }
 
-async fn tokio_sleep(_: Transport, duration_ms: u64) -> Result<(), RpcError> {
-    info!("Sleeping (async) for {} milliseconds", duration_ms);
-    tokio::time::sleep(std::time::Duration::from_millis(duration_ms)).await;
-    info!(
-        "Woke up after sleeping (async) for {} milliseconds",
-        duration_ms
-    );
-    Ok(())
-}
-
 async fn call(transport: Transport, _: ()) -> Result<Value, RpcError> {
     let resp = transport.call("ping", Value::Null)?;
     Ok(resp.result)
@@ -113,7 +103,6 @@ fn main() {
         .with_method("get_random_number", get_random_number)
         .with_method("get_time", get_time)
         .with_method("sleep", sleep)
-        .with_method("tokio_sleep", tokio_sleep)
         .with_method("call", call)
         .with_method("call_many", call_many)
         .with_method("async_call", async_call)

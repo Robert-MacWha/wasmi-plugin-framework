@@ -25,5 +25,7 @@ pkgs.mkShell {
     rustfmt
     binaryen
     rust-bin.stable.latest.rust-analyzer
+    wasm-pack
+    geckodriver
   ];
 }

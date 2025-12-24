@@ -17,6 +17,12 @@ use crate::{
 };
 
 /// Single-threaded, concurrent-safe json-rpc transport layer
+///
+/// TODO: Create async version that accepts async readers/writers and yields properly
+/// For the client-side, considering setting up a centralized "reactor" to handle all reads.
+/// Then we can have the transport send requests to the reactor and await responses via channels.
+/// If the main executor notices that everything but the reactor is blocked, it can yield via
+/// poll_oneoff to free up the web worker and not mindlessly spin.
 #[derive(Clone)]
 pub struct Transport {
     id: Arc<AtomicU64>,

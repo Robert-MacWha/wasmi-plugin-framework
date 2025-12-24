@@ -2,6 +2,9 @@ mod compile;
 pub mod host_handler;
 pub mod plugin;
 // mod plugin_instance;
-mod bridge;
+pub mod bridge;
 pub mod server;
-mod wasi;
+mod time;
+pub mod wasi;
+
+pub use bridge::worker_protocol::WorkerMessage;

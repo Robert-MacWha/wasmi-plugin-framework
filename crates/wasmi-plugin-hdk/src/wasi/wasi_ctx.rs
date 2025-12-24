@@ -1,10 +1,10 @@
-use std::{
-    io::{BufRead, Read, Write},
-    time::{Duration, SystemTime},
-};
+use std::io::{BufRead, Read, Write};
+use thiserror::Error;
 use tracing::{error, info, trace, warn};
-use wasmer::{FunctionEnv, FunctionEnvMut, RuntimeError, imports};
-use wasmi_plugin_rt::web_time::Instant;
+use wasmer::{FunctionEnvMut, RuntimeError};
+use web_time::{Duration, Instant, SystemTime};
+
+use crate::time::blocking_sleep;
 
 /// A WASI context that can be attached to a wasmi instance. Attaches
 /// a subset of WASI syscalls to the instance, allowing it to
@@ -31,7 +31,15 @@ pub struct WasiCtx {
     /// the host may choose to wait for stdin to be ready before resuming execution.
     pub awaiting_stdin: bool,
 
-    pub memory: Option<wasmer::Memory>,
+    memory: Option<wasmer::Memory>,
+}
+
+#[derive(Debug, Error)]
+pub enum WasiError {
+    #[error("Instantiation Error: {0}")]
+    InstantiationError(#[from] wasmer::InstantiationError),
+    #[error("Export Error: {0}")]
+    ExportError(#[from] wasmer::ExportError),
 }
 
 impl Default for WasiCtx {
@@ -51,30 +59,6 @@ impl WasiCtx {
             sleep_until: None,
             awaiting_stdin: false,
             memory: None,
-        }
-    }
-
-    pub fn import_object(
-        mut store: &mut wasmer::Store,
-        ctx: &FunctionEnv<WasiCtx>,
-    ) -> wasmer::Imports {
-        imports! {
-            "wasi_snapshot_preview1" => {
-                "args_get" => wasmer::Function::new_typed_with_env(&mut store, ctx, args_get),
-                "args_sizes_get" => wasmer::Function::new_typed_with_env(&mut store, ctx, args_sizes_get),
-                "environ_get" => wasmer::Function::new_typed_with_env(&mut store, ctx, env_get),
-                "environ_sizes_get" => wasmer::Function::new_typed_with_env(&mut store, ctx, env_sizes_get),
-                "fd_read" => wasmer::Function::new_typed_with_env(&mut store, ctx, fd_read),
-                "fd_write" => wasmer::Function::new_typed_with_env(&mut store, ctx, fd_write),
-                "fd_fdstat_get" => wasmer::Function::new_typed_with_env(&mut store, ctx, fd_fdstat_get),
-                "fd_close" => wasmer::Function::new_typed_with_env(&mut store, ctx, fd_close),
-                "clock_time_get" => wasmer::Function::new_typed_with_env(&mut store, ctx, clock_time_get),
-                "random_get" => wasmer::Function::new_typed_with_env(&mut store, ctx, random_get),
-                "poll_oneoff" => wasmer::Function::new_typed_with_env(&mut store, ctx, poll_oneoff),
-                "sched_yield" => wasmer::Function::new_typed_with_env(&mut store, ctx, sched_yield),
-                "proc_raise" => wasmer::Function::new_typed_with_env(&mut store, ctx, proc_raise),
-                "proc_exit" => wasmer::Function::new_typed_with_env(&mut store, ctx, proc_exit),
-            }
         }
     }
 
@@ -106,17 +90,42 @@ impl WasiCtx {
         self
     }
 
-    /// Returns true if there is data available to read from stdin.
-    #[allow(dead_code)]
-    pub fn stdin_available(&mut self) -> bool {
-        let Some(reader) = &mut self.stdin_reader else {
-            return false;
+    pub fn into_fn(
+        self,
+        mut store: &mut wasmer::Store,
+        module: &wasmer::Module,
+    ) -> Result<wasmer::Function, WasiError> {
+        let ctx = wasmer::FunctionEnv::new(&mut store, self);
+        let imports = wasmer::imports! {
+            "wasi_snapshot_preview1" => {
+                "args_get" => wasmer::Function::new_typed_with_env(&mut store, &ctx, args_get),
+                "args_sizes_get" => wasmer::Function::new_typed_with_env(&mut store, &ctx, args_sizes_get),
+                "environ_get" => wasmer::Function::new_typed_with_env(&mut store, &ctx, env_get),
+                "environ_sizes_get" => wasmer::Function::new_typed_with_env(&mut store, &ctx, env_sizes_get),
+                "fd_read" => wasmer::Function::new_typed_with_env(&mut store, &ctx, fd_read),
+                "fd_write" => wasmer::Function::new_typed_with_env(&mut store, &ctx, fd_write),
+                "fd_fdstat_get" => wasmer::Function::new_typed_with_env(&mut store, &ctx, fd_fdstat_get),
+                "fd_close" => wasmer::Function::new_typed_with_env(&mut store, &ctx, fd_close),
+                "clock_time_get" => wasmer::Function::new_typed_with_env(&mut store, &ctx, clock_time_get),
+                "random_get" => wasmer::Function::new_typed_with_env(&mut store, &ctx, random_get),
+                "poll_oneoff" => wasmer::Function::new_typed_with_env(&mut store, &ctx, poll_oneoff),
+                "sched_yield" => wasmer::Function::new_typed_with_env(&mut store, &ctx, sched_yield),
+                "proc_raise" => wasmer::Function::new_typed_with_env(&mut store, &ctx, proc_raise),
+                "proc_exit" => wasmer::Function::new_typed_with_env(&mut store, &ctx, proc_exit),
+            }
         };
 
-        match reader.fill_buf() {
-            Ok(buf) => !buf.is_empty(),
-            Err(_) => false,
-        }
+        let instance = wasmer::Instance::new(&mut store, &module, &imports)?;
+        let memory = instance.exports.get_memory("memory")?;
+        ctx.as_mut(&mut store).set_memory(memory.clone());
+
+        let start_fn = instance.exports.get_function("_start")?;
+
+        Ok(start_fn.clone())
+    }
+
+    fn set_memory(&mut self, memory: wasmer::Memory) {
+        self.memory = Some(memory);
     }
 }
 
@@ -312,53 +321,68 @@ pub fn fd_write(
     let memory = ctx.memory.as_ref().expect("Memory not initialized");
     let view = memory.view(&store);
 
-    let mut total_written = 0u64;
+    let mut total_written = 0u32;
 
+    let writer = match fd {
+        1 => ctx.stdout_writer.as_mut(),
+        2 => ctx.stderr_writer.as_mut(),
+        _ => return Errno::Badf as i32,
+    };
+
+    let Some(writer) = writer else {
+        return Errno::Badf as i32;
+    };
+
+    let mut scratch = [0u8; 8192];
     for i in 0..ciov_len {
-        // Each ciovec is { buf: u32, len: u32 }
-        let base = (ciov_ptr as usize) + (i as usize * 8);
+        let base = (ciov_ptr as u64) + (i as u64 * 8);
 
-        let mut buf_bytes = [0u8; 4];
-
-        // Read buf pointer
-        view.read(base as u64, &mut buf_bytes).unwrap();
-        let buf_addr = u32::from_le_bytes(buf_bytes) as u64;
-
-        // Read buf length
-        view.read((base + 4) as u64, &mut buf_bytes).unwrap();
-        let buf_len = u32::from_le_bytes(buf_bytes) as usize;
-
-        // Copy from guest memory
-        let mut host_buf = vec![0u8; buf_len];
-        if view.read(buf_addr, &mut host_buf).is_err() {
+        // Read the ciovec (ptr: u32, len: u32)
+        let mut cio_buf = [0u8; 8];
+        if view.read(base, &mut cio_buf).is_err() {
             return Errno::Fault as i32;
         }
 
-        // Borrow writer and write message
-        let writer = match fd {
-            1 => ctx.stdout_writer.as_mut(),
-            2 => ctx.stderr_writer.as_mut(),
-            _ => return Errno::Badf as i32,
-        };
-        let writer = match writer {
-            Some(w) => w,
-            None => return Errno::Badf as i32,
-        };
+        let buf_addr = u32::from_le_bytes(cio_buf[0..4].try_into().unwrap()) as u64;
+        let buf_len = u32::from_le_bytes(cio_buf[4..8].try_into().unwrap()) as usize;
 
-        match writer.write(&host_buf) {
-            Ok(n) => {
-                total_written += n as u64;
-                if n < buf_len {
-                    break; // partial write, stop
-                }
+        if buf_len == 0 {
+            continue;
+        }
+
+        // Process iovecs in chunks with the scratch buffer
+        let mut written = 0;
+        while written < buf_len {
+            let to_copy = (buf_len - written).min(scratch.len());
+            if view
+                .read(buf_addr + written as u64, &mut scratch[..to_copy])
+                .is_err()
+            {
+                return Errno::Fault as i32;
             }
-            Err(_) => return Errno::Io as i32,
+
+            match writer.write(&scratch[..to_copy]) {
+                Ok(0) => break, // Writer closed
+                Ok(n) => {
+                    written += n;
+                    total_written += n as u32;
+                    if n < to_copy {
+                        break; // partial write, stop
+                    }
+                }
+                Err(_) => return Errno::Io as i32,
+            }
+        }
+
+        //? If we couldn't write the full iovec, stop processing further iovecs
+        if written < buf_len {
+            break;
         }
     }
 
     // Write total_written into nwrite_ptr
     if view
-        .write(nwrite_ptr as u64, &(total_written as u32).to_le_bytes())
+        .write(nwrite_ptr as u64, &total_written.to_le_bytes())
         .is_err()
     {
         return Errno::Fault as i32;
@@ -575,32 +599,11 @@ pub fn poll_oneoff(
     let (earliest_userdata, _earliest_clock_id, earliest_deadline_ns, _) =
         clock_subscriptions.iter().min_by_key(|sub| sub.2).unwrap();
 
-    // poll_oneoff MUST block from the guest's perspective until 1+
-    // events are ready. If we try to return immediately with no events (either)
-    // via an Errno::Again or Errno::Success with 0 events, the guest will panic.
-    //
-    // We can't block here since that this isn't an async block (due to wasmi's API)
-    // and we don't want to block the entire executor thread since we're in a single-
-    // threaded-context. SO instead we instantly return a successful result for the
-    // earliest timer, and if the deadline hasn't been reached yet we set the fuel
-    // to zero to yield execution back to the host. The host then waits until the
-    // deadline is reached before resuming execution.
-
-    // TODO: While testing wasmer we will just block until the deadline is reached.
-
-    //? Future deadline trap
+    // Just blocking sleep until the earliest deadline is hit.
     if earliest_deadline_ns > &now_ns {
         let wait_duration = Duration::from_nanos(earliest_deadline_ns - now_ns);
-        std::thread::sleep(wait_duration);
-        // let wait_duration = Duration::from_nanos(earliest_deadline_ns - now_ns);
-        // caller.data_mut().sleep_until = Some(Instant::now() + wait_duration);
-        // info!(
-        //     "poll_oneoff: waiting for {:?} before resuming guest",
-        //     wait_duration
-        // );
 
-        // //? Need to yield, so set fuel to zero
-        // caller.set_fuel(0).unwrap();
+        blocking_sleep(wait_duration);
     }
 
     // Write the event for the earliest deadline
@@ -634,7 +637,6 @@ pub fn poll_oneoff(
 
 pub fn sched_yield(mut _env: FunctionEnvMut<WasiCtx>) -> i32 {
     trace!("wasi sched_yield()");
-
     Errno::Success as i32
 }
 

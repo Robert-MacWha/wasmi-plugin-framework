@@ -13,12 +13,13 @@ use wasmi_plugin_pdk::{
     rpc_message::{RpcError, RpcResponse},
     transport::Transport,
 };
-use wasmi_plugin_rt::sleep;
 
 use crate::bridge::{self, Bridge};
+use crate::compile::Compiled;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::compile::Compiled;
 use crate::host_handler::HostHandler;
+use crate::time::sleep;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PluginId(Uuid);
@@ -61,7 +62,6 @@ pub struct Plugin {
     handler: Arc<dyn HostHandler>,
     logger: Logger,
     max_fuel: Option<u64>,
-    #[cfg(not(target_arch = "wasm32"))]
     compiled: Compiled,
     wasm_bytes: Vec<u8>,
 }
@@ -88,7 +88,6 @@ impl Plugin {
             handler,
             logger: Box::new(default_plugin_logger),
             max_fuel: None,
-            #[cfg(not(target_arch = "wasm32"))]
             compiled: Compiled::new(name, &wasm_bytes)?,
             wasm_bytes,
         })
@@ -139,7 +138,7 @@ impl From<PluginError> for RpcError {
 impl Plugin {
     pub async fn call(&self, method: &str, params: Value) -> Result<RpcResponse, PluginError> {
         //? Construct URL from worker bytes
-        let (bridge, stdout_reader, stdin_writer) = self.create_bridge().unwrap();
+        let (bridge, stdin_writer, stdout_reader) = self.create_bridge().unwrap();
 
         let transport = Transport::new(stdout_reader, stdin_writer);
         let handler = PluginCallback {
@@ -153,6 +152,7 @@ impl Plugin {
         let timeout = sleep(Duration::from_secs(60)).fuse();
         futures::pin_mut!(transport_task, timeout);
 
+        info!("Plugin: Waiting for call to complete or timeout...");
         futures::select! {
             res = transport_task => {
                 bridge.terminate();
@@ -171,14 +171,14 @@ impl Plugin {
     ) -> Result<
         (
             Box<dyn Bridge + Send + Sync>,
-            Box<dyn Read + Send + Sync>,
             Box<dyn Write + Send + Sync>,
+            Box<dyn Read + Send + Sync>,
         ),
         PluginError,
     > {
-        let (bridge, stdout, stdin) = bridge::NativeBridge::new(self.compiled.clone())
+        let (bridge, stdin, stdout) = bridge::NativeBridge::new(self.compiled.clone())
             .map_err(|_| PluginError::PluginDied)?;
-        Ok((Box::new(bridge), Box::new(stdout), Box::new(stdin)))
+        Ok((Box::new(bridge), Box::new(stdin), Box::new(stdout)))
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -187,15 +187,16 @@ impl Plugin {
     ) -> Result<
         (
             Box<dyn Bridge + Send + Sync>,
-            Box<dyn Read + Send + Sync>,
             Box<dyn Write + Send + Sync>,
+            Box<dyn Read + Send + Sync>,
         ),
         PluginError,
     > {
         // Web uses the bytes to send to the Worker
-        let (bridge, stdout, stdin) = bridge::WorkerBridge::new(&self.name, &self.wasm_bytes)
-            .map_err(|_| PluginError::PluginDied)?;
-        Ok((Box::new(bridge), Box::new(stdout), Box::new(stdin)))
+        let (bridge, stdin, stdout) =
+            bridge::WorkerBridge::new(&self.compiled.name, &self.wasm_bytes)
+                .map_err(|_| PluginError::PluginDied)?;
+        Ok((Box::new(bridge), Box::new(stdin), Box::new(stdout)))
     }
 }
 

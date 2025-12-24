@@ -6,14 +6,15 @@ use thiserror::Error;
 use tokio::spawn;
 use tokio::task::{JoinHandle, spawn_blocking};
 use tracing::info;
-use wasmer_wasix::runners::wasi::{RuntimeOrEngine, WasiRunner};
+use wasmer::{Instance, Store};
 
 use crate::bridge::Bridge;
-use crate::bridge::virtual_file::{WasiInputFile, WasiOutputFile};
-use crate::compile::Compiled;
-use crate::wasi::non_blocking_pipe::{
+use crate::bridge::non_blocking_pipe::{
     NonBlockingPipeReader, NonBlockingPipeWriter, non_blocking_pipe,
 };
+use crate::bridge::virtual_file::{WasiInputFile, WasiOutputFile};
+use crate::compile::Compiled;
+use crate::wasi::wasi_ctx::WasiCtx;
 
 pub struct NativeBridge {
     wasm_handle: JoinHandle<()>,
@@ -34,14 +35,14 @@ impl NativeBridge {
     ) -> Result<
         (
             Self,
-            impl Read + Send + Sync + 'static,
             impl Write + Send + Sync + 'static,
+            impl Read + Send + Sync + 'static,
         ),
         NativeBridgeError,
     > {
         let name = compiled.name.clone();
-        let (stdout_reader, stdout_writer) = non_blocking_pipe();
         let (stdin_reader, stdin_writer) = non_blocking_pipe();
+        let (stdout_reader, stdout_writer) = non_blocking_pipe();
         let (stderr_reader, stderr_writer) = non_blocking_pipe();
 
         let wasm_handle = spawn_blocking(move || {
@@ -51,21 +52,14 @@ impl NativeBridge {
             }
         });
 
-        let stderr_handle = spawn(async move {
-            let mut buf_reader = futures::io::BufReader::new(stderr_reader);
-            let mut line = String::new();
-            while buf_reader.read_line(&mut line).await.is_ok_and(|n| n > 0) {
-                info!("[plugin] [{}], {}", name, line.trim_end());
-                line.clear();
-            }
-        });
+        // TODO: stderr task to log to console
 
         let bridge = NativeBridge {
             wasm_handle,
             stderr_handle,
         };
 
-        Ok((bridge, stdout_reader, stdin_writer))
+        Ok((bridge, stdin_writer, stdout_reader))
     }
 
     fn run_instance(
@@ -77,22 +71,20 @@ impl NativeBridge {
         let engine = compiled.engine;
         let module = compiled.module;
 
-        let stdin = WasiInputFile { reader: stdin };
-        let stdout = WasiOutputFile { writer: stdout };
-        let stderr = WasiOutputFile { writer: stderr };
+        let store = Store::new(&engine);
 
-        let mut runner = WasiRunner::new();
-        runner
-            .with_stdin(Box::new(stdin))
-            .with_stdout(Box::new(stdout))
-            .with_stderr(Box::new(stderr));
+        let mut wasi_ctx = WasiCtx::new()
+            .set_stdin(stdin)
+            .set_stdout(stdout)
+            .set_stderr(stderr);
+        let imports = wasi_ctx.import_object(&store, &module);
+        let instance = Instance::new(&mut store, module, imports)?;
 
-        let _ = runner.run_wasm(
-            RuntimeOrEngine::Engine(engine),
-            &compiled.name,
-            module,
-            compiled.module_hash,
-        );
+        let memory = instance.exports.get_memory("memory")?;
+        wasi_ctx.set_memory(memory);
+
+        let start = instance.exports.get_function("_start")?;
+        start.call(&mut store, &[])?;
 
         Ok(())
     }

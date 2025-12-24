@@ -13,7 +13,6 @@ categories.workspace = true
 exclude.workspace = true
 
 [dependencies]
-web-time = { workspace = true }
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
 gloo-timers = { workspace = true }

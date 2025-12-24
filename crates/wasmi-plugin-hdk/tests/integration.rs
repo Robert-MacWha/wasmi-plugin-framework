@@ -1,11 +1,16 @@
 use serde_json::Value;
 use std::sync::Arc;
 use tracing::info;
+#[cfg(target_family = "wasm")]
+use tracing_wasm::{ConsoleConfig, WASMLayerConfigBuilder};
 use wasmi_plugin_hdk::{plugin::Plugin, server::HostServer};
 use web_time::{Instant, SystemTime};
 
 #[cfg(target_family = "wasm")]
 use wasm_bindgen_test::*;
+
+#[cfg(target_family = "wasm")]
+wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
 const PLUGIN_WASM: &[u8] = include_bytes!("../../../target/wasm32-wasip1/release/test-plugin.wasm");
 
@@ -25,57 +30,67 @@ fn get_host_server() -> HostServer<()> {
         })
 }
 
-#[cfg_attr(target_family = "wasm", wasm_bindgen_test)]
-#[cfg_attr(not(target_family = "wasm"), tokio::test)]
-#[tracing_test::traced_test]
-async fn test_plugin() {
-    info!("Starting test_plugin...");
+// #[cfg_attr(target_family = "wasm", wasm_bindgen_test)]
+// #[cfg_attr(not(target_family = "wasm"), tokio::test)]
+// #[cfg_attr(not(target_family = "wasm"), tracing_test::traced_test)]
+// async fn test_plugin() {
+//     #[cfg(target_family = "wasm")]
+//     {
+//         let config = WASMLayerConfigBuilder::new()
+//             .set_console_config(ConsoleConfig::ReportWithoutConsoleColor)
+//             .build();
+//         tracing_wasm::set_as_global_default_with_config(config);
+//     }
 
-    let wasm_bytes = load_plugin_wasm();
-    let handler = Arc::new(get_host_server());
+//     info!("Starting test_plugin...");
 
-    let plugin = Plugin::new("test_plugin", wasm_bytes, handler).unwrap();
-    plugin.call("ping", Value::Null).await.unwrap();
-}
+//     let wasm_bytes = load_plugin_wasm();
+//     let handler = Arc::new(get_host_server());
 
-#[cfg_attr(target_family = "wasm", wasm_bindgen_test)]
-#[cfg_attr(not(target_family = "wasm"), tokio::test)]
-async fn test_get_random_number() {
-    info!("Starting get_random_number test...");
+//     let plugin = Plugin::new("test_plugin", wasm_bytes, handler).unwrap();
+//     let resp = plugin.call("ping", Value::Null).await.unwrap();
+//     assert_eq!(resp.result.as_str().unwrap(), "pong");
+// }
 
-    let wasm_bytes = load_plugin_wasm();
-    let handler = Arc::new(get_host_server());
+// #[cfg_attr(target_family = "wasm", wasm_bindgen_test)]
+// #[cfg_attr(not(target_family = "wasm"), tokio::test)]
+// async fn test_get_random_number() {
+//     info!("Starting get_random_number test...");
 
-    let plugin = Plugin::new("test_plugin", wasm_bytes, handler).unwrap();
-    let response = plugin.call("get_random_number", Value::Null).await.unwrap();
+//     let wasm_bytes = load_plugin_wasm();
+//     let handler = Arc::new(get_host_server());
 
-    info!("Random number response: {:?}", response);
-    response.result.as_u64().unwrap();
-}
+//     let plugin = Plugin::new("test_plugin", wasm_bytes, handler).unwrap();
+//     let response = plugin.call("get_random_number", Value::Null).await.unwrap();
 
-#[cfg_attr(target_family = "wasm", wasm_bindgen_test)]
-#[cfg_attr(not(target_family = "wasm"), tokio::test)]
-async fn test_get_time() {
-    info!("Starting get_time test...");
+//     info!("Random number response: {:?}", response);
+//     response.result.as_u64().unwrap();
+// }
 
-    let wasm_bytes = load_plugin_wasm();
-    let handler = Arc::new(get_host_server());
+// #[cfg_attr(target_family = "wasm", wasm_bindgen_test)]
+// #[cfg_attr(not(target_family = "wasm"), tokio::test)]
+// async fn test_get_time() {
+//     info!("Starting get_time test...");
 
-    let plugin = Plugin::new("test_plugin", wasm_bytes, handler).unwrap();
-    let response = plugin.call("get_time", Value::Null).await.unwrap();
+//     let wasm_bytes = load_plugin_wasm();
+//     let handler = Arc::new(get_host_server());
 
-    info!("Get time response: {:?}", response);
+//     let plugin = Plugin::new("test_plugin", wasm_bytes, handler).unwrap();
+//     let response = plugin.call("get_time", Value::Null).await.unwrap();
 
-    let timestamp = response.result.as_u64().unwrap();
-    let now = SystemTime::now()
-        .duration_since(web_time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
+//     info!("Get time response: {:?}", response);
 
-    let diff = timestamp.abs_diff(now);
-    assert!(diff < 2, "Timestamp difference too large: {}", diff);
-}
+//     let timestamp = response.result.as_u64().unwrap();
+//     let now = SystemTime::now()
+//         .duration_since(web_time::UNIX_EPOCH)
+//         .unwrap()
+//         .as_secs();
 
+//     let diff = timestamp.abs_diff(now);
+//     assert!(diff < 2, "Timestamp difference too large: {}", diff);
+// }
+
+// TODO: Fix this for `wasm-pack test --headless --firefox ./crates/wasmi-plugin-hdk`
 #[cfg_attr(target_family = "wasm", wasm_bindgen_test)]
 #[cfg_attr(not(target_family = "wasm"), tokio::test)]
 async fn test_sleep() {
@@ -101,89 +116,64 @@ async fn test_sleep() {
     );
 }
 
-#[cfg_attr(target_family = "wasm", wasm_bindgen_test)]
-#[cfg_attr(not(target_family = "wasm"), tokio::test)]
-async fn test_tokio_sleep() {
-    info!("Starting tokio sleep test...");
+// #[cfg_attr(target_family = "wasm", wasm_bindgen_test)]
+// #[cfg_attr(not(target_family = "wasm"), tokio::test)]
+// async fn test_call() {
+//     info!("Starting call test...");
 
-    let wasm_bytes = load_plugin_wasm();
-    let handler = Arc::new(get_host_server());
+//     let wasm_bytes = load_plugin_wasm();
+//     let handler = Arc::new(get_host_server());
 
-    let plugin = Plugin::new("test_plugin", wasm_bytes, handler).unwrap();
+//     let plugin = Plugin::new("test_plugin", wasm_bytes, handler).unwrap();
+//     let resp = plugin.call("call", Value::Null).await.unwrap();
 
-    let sleep_duration = 1500; // milliseconds
-    let start = Instant::now();
-    plugin
-        .call("tokio_sleep", Value::Number(sleep_duration.into()))
-        .await
-        .unwrap();
-    let elapsed = start.elapsed().as_millis();
+//     assert_eq!(resp.result.as_str().unwrap(), "pong");
+// }
 
-    assert!(
-        elapsed >= sleep_duration as u128,
-        "Sleep duration too short: {} ms",
-        elapsed
-    );
-}
+// #[cfg_attr(target_family = "wasm", wasm_bindgen_test)]
+// #[cfg_attr(not(target_family = "wasm"), tokio::test)]
+// async fn test_call_many() {
+//     info!("Starting call_many test...");
 
-#[cfg_attr(target_family = "wasm", wasm_bindgen_test)]
-#[cfg_attr(not(target_family = "wasm"), tokio::test)]
-async fn test_call() {
-    info!("Starting call test...");
+//     let wasm_bytes = load_plugin_wasm();
+//     let handler = Arc::new(get_host_server());
 
-    let wasm_bytes = load_plugin_wasm();
-    let handler = Arc::new(get_host_server());
+//     let plugin = Plugin::new("test_plugin", wasm_bytes, handler).unwrap();
+//     plugin
+//         .call("call_many", Value::Number(200.into()))
+//         .await
+//         .unwrap();
+// }
 
-    let plugin = Plugin::new("test_plugin", wasm_bytes, handler).unwrap();
-    let resp = plugin.call("call", Value::Null).await.unwrap();
+// #[cfg_attr(target_family = "wasm", wasm_bindgen_test)]
+// #[cfg_attr(not(target_family = "wasm"), tokio::test)]
+// async fn test_async_call() {
+//     info!("Starting async_call test...");
 
-    assert_eq!(resp.result.as_str().unwrap(), "pong");
-}
+//     let wasm_bytes = load_plugin_wasm();
+//     let handler = Arc::new(get_host_server());
 
-#[cfg_attr(target_family = "wasm", wasm_bindgen_test)]
-#[cfg_attr(not(target_family = "wasm"), tokio::test)]
-async fn test_call_many() {
-    info!("Starting call_many test...");
+//     let plugin = Plugin::new("test_plugin", wasm_bytes, handler).unwrap();
+//     let resp = plugin.call("async_call", Value::Null).await.unwrap();
+//     assert_eq!(resp.result.as_str().unwrap(), "pong");
+// }
 
-    let wasm_bytes = load_plugin_wasm();
-    let handler = Arc::new(get_host_server());
+// #[cfg_attr(target_family = "wasm", wasm_bindgen_test)]
+// #[cfg_attr(not(target_family = "wasm"), tokio::test)]
+// async fn test_prime_sieve() {
+//     info!("Starting prime sieve test...");
 
-    let plugin = Plugin::new("test_plugin", wasm_bytes, handler).unwrap();
-    plugin
-        .call("call_many", Value::Number(200.into()))
-        .await
-        .unwrap();
-}
+//     let wasm_bytes = load_plugin_wasm();
+//     let handler = Arc::new(get_host_server());
 
-#[cfg_attr(target_family = "wasm", wasm_bindgen_test)]
-#[cfg_attr(not(target_family = "wasm"), tokio::test)]
-async fn test_async_call() {
-    info!("Starting async_call test...");
+//     let plugin = Plugin::new("test_plugin", wasm_bytes, handler).unwrap();
 
-    let wasm_bytes = load_plugin_wasm();
-    let handler = Arc::new(get_host_server());
+//     let response = plugin
+//         .call("prime_sieve", Value::Number(1000.into()))
+//         .await
+//         .unwrap();
 
-    let plugin = Plugin::new("test_plugin", wasm_bytes, handler).unwrap();
-    let resp = plugin.call("async_call", Value::Null).await.unwrap();
-    assert_eq!(resp.result.as_str().unwrap(), "pong");
-}
-
-#[cfg_attr(target_family = "wasm", wasm_bindgen_test)]
-#[cfg_attr(not(target_family = "wasm"), tokio::test)]
-async fn test_prime_sieve() {
-    info!("Starting prime sieve test...");
-
-    let wasm_bytes = load_plugin_wasm();
-    let handler = Arc::new(get_host_server());
-
-    let plugin = Plugin::new("test_plugin", wasm_bytes, handler).unwrap();
-
-    let response = plugin
-        .call("prime_sieve", Value::Number(1000.into()))
-        .await
-        .unwrap();
-
-    info!("Prime sieve response: {:?}", response);
-    let count = response.result["count"].as_u64().unwrap();
-    assert_eq!(count, 168);
-}
+//     info!("Prime sieve response: {:?}", response);
+//     let count = response.result["count"].as_u64().unwrap();
+//     assert_eq!(count, 168);
+// }

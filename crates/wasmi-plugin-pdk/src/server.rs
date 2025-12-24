@@ -2,7 +2,7 @@ use std::io::Write;
 
 use serde::{Serialize, de::DeserializeOwned};
 use thiserror::Error;
-use tokio::runtime::Builder;
+use tracing::info;
 
 use crate::{
     router::{MaybeSend, Router},
@@ -56,14 +56,6 @@ impl PluginServer {
                 std::process::exit(1);
             }
         }
-        // let transport = self.transport.clone();
-
-        // let rt = Builder::new_current_thread().enable_time().build().unwrap();
-        // let local = tokio::task::LocalSet::new();
-
-        // rt.block_on(local.run_until(async move {
-        //     let _ = transport.process_next_line(Some(&self)).await;
-        // }));
     }
 
     fn try_run(&self) -> Result<(), PluginServerError> {
@@ -78,22 +70,21 @@ impl PluginServer {
             return Err(PluginServerError::InvalidMessage(message));
         };
 
-        //? Dispatch handler
-        let rt = Builder::new_current_thread().enable_time().build()?;
-        let local = tokio::task::LocalSet::new();
+        info!("PluginServer: Received request: {:?}", request);
 
-        let resp = rt.block_on(local.run_until(async move {
-            let transport = Transport::new(std::io::stdin(), std::io::stdout());
+        let transport = Transport::new(std::io::stdin(), std::io::stdout());
+        let resp = futures::executor::block_on(async move {
             self.router
                 .handle_with_state(transport, &request.method, request.params)
                 .await
-        }));
+        });
 
         //? Send response
         let resp = match resp {
             Ok(result) => RpcMessage::response(request.id, result),
             Err(error) => RpcMessage::error_response(request.id, error),
         };
+        info!("PluginServer: Sending response: {:?}", resp);
 
         let serialized = serde_json::to_string(&resp)?;
         let msg = format!("{}\n", serialized);

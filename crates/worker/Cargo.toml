@@ -1,0 +1,33 @@
+[package]
+name = "worker"
+version.workspace = true
+rust-version.workspace = true
+description = "Lightweight web worker used to run WASIX"
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+readme.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+exclude.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+futures = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde-wasm-bindgen = { workspace = true }
+thiserror = { workspace = true }
+wasmi-plugin-hdk = { workspace = true }
+wasmi-plugin-pdk = { workspace = true }
+wasmi-plugin-rt = { workspace = true }
+web-time = { workspace = true }
+wasmer-types = { workspace = true }
+wasmer = { workspace = true, features = ["js-default"] }
+wasmer-wasix = { workspace = true, features = ["js-default"] }
+web-sys = { workspace = true, features=["Worker", "DedicatedWorkerGlobalScope", "MessageEvent", "Blob", "BlobPropertyBag", "Url", "console", "TextDecoder"] }
+wasm-bindgen = { workspace = true }
+wasm-bindgen-futures = { workspace = true }
