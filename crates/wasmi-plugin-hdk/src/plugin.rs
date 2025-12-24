@@ -60,6 +60,7 @@ pub struct Plugin {
     handler: Arc<dyn HostHandler>,
     logger: Logger,
     compiled: Compiled,
+    timeout: Duration,
     #[allow(dead_code)]
     // TODO: Use fuel to terminate native plugins
     max_fuel: Option<u64>,
@@ -87,6 +88,7 @@ impl Plugin {
             handler,
             logger: Box::new(default_plugin_logger),
             max_fuel: None,
+            timeout: Duration::from_secs(10),
             compiled: Compiled::new(name, &wasm_bytes)?,
         })
     }
@@ -103,6 +105,13 @@ impl Plugin {
     /// no logger is provided a default logger is used.
     pub fn with_logger(mut self, logger: Logger) -> Self {
         self.logger = Box::new(logger);
+        self
+    }
+
+    /// Sets a timeout duration for plugin calls. If a call takes longer than
+    /// this duration, it will be terminated and an error will be returned.
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
         self
     }
 
@@ -127,7 +136,7 @@ impl Plugin {
         let transport = Transport::new(stdout_reader, stdin_writer);
 
         let transport_task = transport.call(method, params, Some(handler)).fuse();
-        let timeout = sleep(Duration::from_secs(1)).fuse();
+        let timeout = sleep(self.timeout).fuse();
         futures::pin_mut!(transport_task, timeout);
 
         info!("Plugin: Waiting for call to complete or timeout...");
