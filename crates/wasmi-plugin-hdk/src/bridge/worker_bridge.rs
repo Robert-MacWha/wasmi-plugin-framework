@@ -29,10 +29,12 @@ struct SendWorker(Worker);
 
 #[derive(Debug, Error)]
 pub enum WorkerBridgeError {
-    #[error("JavaScript error: {0:?}")]
+    #[error("JavaScript error")]
     JsValue(JsValue),
     #[error("Serde serialization error: {0}")]
     Serde(#[from] serde_wasm_bindgen::Error),
+    #[error("Module serialization error: {0}")]
+    ModuleSerialization(#[from] wasmer::SerializeError),
     #[error("Receiver error: {0}")]
     Receiver(#[from] futures::channel::oneshot::Canceled),
 }
@@ -46,7 +48,6 @@ unsafe impl Sync for WorkerBridge {}
 impl WorkerBridge {
     pub fn new(
         compiled: Compiled,
-        wasm_bytes: &[u8],
     ) -> Result<
         (
             Self,
@@ -55,7 +56,7 @@ impl WorkerBridge {
         ),
         WorkerBridgeError,
     > {
-        let name = compiled.name;
+        let name = compiled.name.clone();
         info!("Creating WorkerBridge for plugin: {}", &name);
 
         let (ready_tx, ready_rx) = futures::channel::oneshot::channel::<()>();
@@ -76,14 +77,13 @@ impl WorkerBridge {
 
         //? Send all stdin data to worker
         let worker_inner = worker.clone();
-        let wasm = wasm_bytes.to_vec();
         let stdin_buf = stdin.buffer();
         let stdout_buf = stdout.buffer();
         let stderr_buf = stderr.buffer();
         spawn_local(async move {
             match load(
                 ready_rx,
-                wasm,
+                compiled,
                 stdin_buf,
                 stdout_buf,
                 stderr_buf,
@@ -213,7 +213,7 @@ fn on_message(ready_tx: Sender<()>) -> Box<dyn FnMut(MessageEvent)> {
 /// Sends the Load message to the worker, transferring the Wasm bytes and pipes
 async fn load(
     ready_rx: Receiver<()>,
-    wasm: Vec<u8>,
+    compiled: Compiled,
     stdin: SharedArrayBuffer,
     stdout: SharedArrayBuffer,
     stderr: SharedArrayBuffer,
@@ -222,13 +222,17 @@ async fn load(
     ready_rx.await?;
 
     // Create Load message
-    let msg = serde_wasm_bindgen::to_value(&WorkerMessage::Load { wasm })?;
+    let wasm_module = compiled.module.serialize()?;
+    let msg = serde_wasm_bindgen::to_value(&WorkerMessage::Load {
+        wasm_module: wasm_module.to_vec(),
+    })?;
     Reflect::set(&msg, &"stdin".into(), &stdin).map_err(WorkerBridgeError::JsValue)?;
     Reflect::set(&msg, &"stdout".into(), &stdout).map_err(WorkerBridgeError::JsValue)?;
     Reflect::set(&msg, &"stderr".into(), &stderr).map_err(WorkerBridgeError::JsValue)?;
 
     // Extract the wasm as Uint8Array for transfer
-    let payload = js_sys::Reflect::get(&msg, &"wasm".into()).map_err(WorkerBridgeError::JsValue)?;
+    let payload =
+        js_sys::Reflect::get(&msg, &"wasm_module".into()).map_err(WorkerBridgeError::JsValue)?;
     let uint8_array = payload
         .dyn_into::<js_sys::Uint8Array>()
         .map_err(WorkerBridgeError::JsValue)?;

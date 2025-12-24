@@ -16,8 +16,8 @@ use web_sys::{
 
 #[derive(Debug, Error)]
 enum WorkerError {
-    #[error("Compile Error: {0}")]
-    CompileError(#[from] wasmer::CompileError),
+    #[error("Deserialization Error: {0}")]
+    DeserializeError(#[from] wasmer::DeserializeError),
     #[error("WASI Error: {0}")]
     WasiError(#[from] wasi_ctx::WasiError),
     #[error("Runtime Error: {0}")]
@@ -46,7 +46,7 @@ fn on_message(e: MessageEvent) {
         return;
     };
 
-    let WorkerMessage::Load { wasm } = msg else {
+    let WorkerMessage::Load { wasm_module } = msg else {
         error("Worker: Received unexpected message type");
         return;
     };
@@ -70,7 +70,7 @@ fn on_message(e: MessageEvent) {
         return;
     };
 
-    if let Err(err) = run_instance(&wasm, stdin, stdout, stderr) {
+    if let Err(err) = run_instance(&wasm_module, stdin, stdout, stderr) {
         error(&format!("Worker: Error running instance: {:?}", err));
     } else {
         log("Worker: Instance finished execution");
@@ -84,7 +84,7 @@ fn get_sab(obj: &JsValue, key: &str) -> Option<SharedArrayBuffer> {
 }
 
 fn run_instance(
-    wasm_bytes: &[u8],
+    wasm_module: &[u8],
     stdin: SharedArrayBuffer,
     stdout: SharedArrayBuffer,
     stderr: SharedArrayBuffer,
@@ -94,7 +94,7 @@ fn run_instance(
     let stderr = SharedPipe::new(&stderr);
 
     let mut store = wasmer::Store::default();
-    let module = wasmer::Module::new(&store, wasm_bytes)?;
+    let module = unsafe { wasmer::Module::deserialize(&store, wasm_module) }?;
 
     let wasi_ctx = WasiCtx::new()
         .set_stdin(stdin)

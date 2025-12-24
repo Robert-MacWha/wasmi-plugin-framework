@@ -7,8 +7,9 @@ pub enum WorkerMessage {
     /// Load wasm bytes into the worker. Also has attached stdin/stdout/stderr
     /// pipes, which are SharedArrayBuffers but can't be serialized.
     Load {
+        /// Serialized wasm module.  
         #[serde(with = "serde_bytes")]
-        wasm: Vec<u8>,
+        wasm_module: Vec<u8>,
     },
     Log {
         message: String,

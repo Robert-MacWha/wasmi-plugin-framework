@@ -60,7 +60,6 @@ pub struct Plugin {
     handler: Arc<dyn HostHandler>,
     logger: Logger,
     compiled: Compiled,
-    wasm_bytes: Vec<u8>,
     #[allow(dead_code)]
     // TODO: Use fuel to terminate native plugins
     max_fuel: Option<u64>,
@@ -89,7 +88,6 @@ impl Plugin {
             logger: Box::new(default_plugin_logger),
             max_fuel: None,
             compiled: Compiled::new(name, &wasm_bytes)?,
-            wasm_bytes,
         })
     }
 
@@ -129,7 +127,7 @@ impl Plugin {
         let transport = Transport::new(stdout_reader, stdin_writer);
 
         let transport_task = transport.call(method, params, Some(handler)).fuse();
-        let timeout = sleep(Duration::from_secs(60)).fuse();
+        let timeout = sleep(Duration::from_secs(1)).fuse();
         futures::pin_mut!(transport_task, timeout);
 
         info!("Plugin: Waiting for call to complete or timeout...");
@@ -157,9 +155,8 @@ impl Plugin {
         ),
         PluginError,
     > {
-        let (bridge, stdin, stdout) =
-            bridge::NativeBridge::new(self.compiled.clone(), &self.wasm_bytes)
-                .map_err(|_| PluginError::PluginDied)?;
+        let (bridge, stdin, stdout) = bridge::NativeBridge::new(self.compiled.clone())
+            .map_err(|_| PluginError::PluginDied)?;
         Ok((bridge, stdin, stdout))
     }
 
@@ -175,9 +172,8 @@ impl Plugin {
         ),
         PluginError,
     > {
-        let (bridge, stdin, stdout) =
-            bridge::WorkerBridge::new(self.compiled.clone(), &self.wasm_bytes)
-                .map_err(|_| PluginError::PluginDied)?;
+        let (bridge, stdin, stdout) = bridge::WorkerBridge::new(self.compiled.clone())
+            .map_err(|_| PluginError::PluginDied)?;
         Ok((bridge, stdin, stdout))
     }
 }

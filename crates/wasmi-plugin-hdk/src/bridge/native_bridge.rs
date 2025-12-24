@@ -31,7 +31,6 @@ pub enum NativeBridgeError {
 impl NativeBridge {
     pub fn new(
         compiled: Compiled,
-        _wasm_bytes: &[u8],
     ) -> Result<
         (
             Self,

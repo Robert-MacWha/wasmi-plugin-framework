@@ -40,6 +40,17 @@ fn setup_logs() {
                 .init();
         });
     }
+
+    #[cfg(target_family = "wasm")]
+    {
+        INIT.call_once(|| {
+            tracing_wasm::set_as_global_default_with_config(
+                tracing_wasm::WASMLayerConfigBuilder::new()
+                    .set_console_config(tracing_wasm::ConsoleConfig::ReportWithoutConsoleColor)
+                    .build(),
+            );
+        });
+    }
 }
 
 #[cfg_attr(target_family = "wasm", wasm_bindgen_test)]
