@@ -1,7 +1,7 @@
-use std::io::{Read, Write};
 use std::{fmt::Display, sync::Arc, time::Duration};
 
 use futures::FutureExt;
+use futures::{AsyncRead, AsyncWrite};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
@@ -11,13 +11,13 @@ use wasmi_plugin_pdk::{
     api::RequestHandler,
     router::BoxFuture,
     rpc_message::{RpcError, RpcResponse},
-    transport::Transport,
 };
 
 use crate::bridge::{self, Bridge};
 use crate::compile::Compiled;
 use crate::host_handler::HostHandler;
 use crate::time::sleep;
+use crate::transport::{Transport, TransportError};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PluginId(Uuid);
@@ -70,8 +70,8 @@ pub struct Plugin {
 pub enum PluginError {
     // #[error("spawn error")]
     // SpawnError(#[from] SpawnError),
-    #[error("transport error")]
-    RpcError(#[from] RpcError),
+    #[error("Transport error")]
+    TransportError(#[from] TransportError),
     #[error("plugin died")]
     PluginDied,
 }
@@ -117,38 +117,18 @@ impl Plugin {
     }
 }
 
-impl PluginError {
-    pub fn as_rpc_code(&self) -> RpcError {
-        match self {
-            PluginError::RpcError(code) => code.clone(),
-            _ => RpcError::Custom(self.to_string()),
-        }
-    }
-}
-
-impl From<PluginError> for RpcError {
-    fn from(err: PluginError) -> Self {
-        match err {
-            PluginError::RpcError(code) => code,
-            _ => RpcError::Custom(err.to_string()),
-        }
-    }
-}
-
 impl Plugin {
     pub async fn call(&self, method: &str, params: Value) -> Result<RpcResponse, PluginError> {
         //? Construct URL from worker bytes
         let (bridge, stdin_writer, stdout_reader) = self.create_bridge().unwrap();
 
-        let transport = Transport::new(stdout_reader, stdin_writer);
         let handler = PluginCallback {
             handler: self.handler.clone(),
             uuid: self.id,
         };
+        let transport = Transport::new(stdout_reader, stdin_writer);
 
-        let transport_task = transport
-            .async_call_with_handler(method, params, &handler)
-            .fuse();
+        let transport_task = transport.call(method, params, Some(handler)).fuse();
         let timeout = sleep(Duration::from_secs(60)).fuse();
         futures::pin_mut!(transport_task, timeout);
 
@@ -171,16 +151,16 @@ impl Plugin {
         &self,
     ) -> Result<
         (
-            Box<dyn Bridge + Send + Sync>,
-            Box<dyn Write + Send + Sync>,
-            Box<dyn Read + Send + Sync>,
+            impl Bridge + Send + Sync + 'static,
+            impl AsyncWrite + Send + Sync + 'static,
+            impl AsyncRead + Send + Sync + 'static,
         ),
         PluginError,
     > {
         let (bridge, stdin, stdout) =
             bridge::NativeBridge::new(self.compiled.clone(), &self.wasm_bytes)
                 .map_err(|_| PluginError::PluginDied)?;
-        Ok((Box::new(bridge), Box::new(stdin), Box::new(stdout)))
+        Ok((bridge, stdin, stdout))
     }
 
     #[allow(clippy::type_complexity)]
@@ -189,16 +169,16 @@ impl Plugin {
         &self,
     ) -> Result<
         (
-            Box<dyn Bridge + Send + Sync>,
-            Box<dyn Write + Send + Sync>,
-            Box<dyn Read + Send + Sync>,
+            impl Bridge + Send + Sync + 'static,
+            impl AsyncWrite + Send + Sync + 'static,
+            impl AsyncRead + Send + Sync + 'static,
         ),
         PluginError,
     > {
         let (bridge, stdin, stdout) =
             bridge::WorkerBridge::new(self.compiled.clone(), &self.wasm_bytes)
                 .map_err(|_| PluginError::PluginDied)?;
-        Ok((Box::new(bridge), Box::new(stdin), Box::new(stdout)))
+        Ok((bridge, stdin, stdout))
     }
 }
 

@@ -15,5 +15,5 @@ pub mod shared_pipe;
 pub mod worker_protocol;
 
 pub trait Bridge {
-    fn terminate(self: Box<Self>);
+    fn terminate(self);
 }

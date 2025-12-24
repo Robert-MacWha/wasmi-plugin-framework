@@ -49,6 +49,15 @@ pub enum RpcError {
 }
 
 impl RpcMessage {
+    pub fn request(id: u64, method: String, params: Value) -> Self {
+        RpcMessage::RpcRequest(RpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id,
+            method,
+            params,
+        })
+    }
+
     pub fn response(id: u64, result: Value) -> Self {
         RpcMessage::RpcResponse(RpcResponse {
             jsonrpc: "2.0".to_string(),

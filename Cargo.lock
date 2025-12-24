@@ -2383,6 +2383,7 @@ dependencies = [
  "tracing-test",
  "tracing-wasm",
  "uuid",
+ "wasm-bindgen",
  "wasm-bindgen-futures",
  "wasm-bindgen-test",
  "wasmer",

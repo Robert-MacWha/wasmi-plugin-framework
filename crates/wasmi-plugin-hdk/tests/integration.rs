@@ -1,5 +1,5 @@
 use serde_json::Value;
-use std::sync::Arc;
+use std::sync::{Arc, Once};
 use tracing::info;
 use wasmi_plugin_hdk::{plugin::Plugin, server::HostServer};
 use web_time::{Instant, SystemTime};
@@ -11,6 +11,8 @@ use wasm_bindgen_test::*;
 wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
 const PLUGIN_WASM: &[u8] = include_bytes!("../../../target/wasm32-wasip1/release/test-plugin.wasm");
+
+static INIT: Once = Once::new();
 
 fn load_plugin_wasm() -> Vec<u8> {
     PLUGIN_WASM.to_vec()
@@ -28,10 +30,22 @@ fn get_host_server() -> HostServer<()> {
         })
 }
 
+fn setup_logs() {
+    #[cfg(not(target_family = "wasm"))]
+    {
+        INIT.call_once(|| {
+            tracing_subscriber::fmt()
+                .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+                .with_test_writer()
+                .init();
+        });
+    }
+}
+
 #[cfg_attr(target_family = "wasm", wasm_bindgen_test)]
 #[cfg_attr(not(target_family = "wasm"), tokio::test)]
-#[cfg_attr(not(target_family = "wasm"), tracing_test::traced_test)]
 async fn test_plugin() {
+    setup_logs();
     info!("Starting test_plugin...");
 
     let wasm_bytes = load_plugin_wasm();
@@ -45,6 +59,7 @@ async fn test_plugin() {
 #[cfg_attr(target_family = "wasm", wasm_bindgen_test)]
 #[cfg_attr(not(target_family = "wasm"), tokio::test)]
 async fn test_get_random_number() {
+    setup_logs();
     info!("Starting get_random_number test...");
 
     let wasm_bytes = load_plugin_wasm();
@@ -60,6 +75,7 @@ async fn test_get_random_number() {
 #[cfg_attr(target_family = "wasm", wasm_bindgen_test)]
 #[cfg_attr(not(target_family = "wasm"), tokio::test)]
 async fn test_get_time() {
+    setup_logs();
     info!("Starting get_time test...");
 
     let wasm_bytes = load_plugin_wasm();
@@ -84,6 +100,7 @@ async fn test_get_time() {
 // #[cfg_attr(target_family = "wasm", wasm_bindgen_test)]
 #[cfg_attr(not(target_family = "wasm"), tokio::test)]
 async fn test_sleep() {
+    setup_logs();
     info!("Starting sleep test...");
 
     let wasm_bytes = load_plugin_wasm();
@@ -109,6 +126,7 @@ async fn test_sleep() {
 #[cfg_attr(target_family = "wasm", wasm_bindgen_test)]
 #[cfg_attr(not(target_family = "wasm"), tokio::test)]
 async fn test_call() {
+    setup_logs();
     info!("Starting call test...");
 
     let wasm_bytes = load_plugin_wasm();
@@ -123,6 +141,7 @@ async fn test_call() {
 #[cfg_attr(target_family = "wasm", wasm_bindgen_test)]
 #[cfg_attr(not(target_family = "wasm"), tokio::test)]
 async fn test_call_many() {
+    setup_logs();
     info!("Starting call_many test...");
 
     let wasm_bytes = load_plugin_wasm();
@@ -138,6 +157,7 @@ async fn test_call_many() {
 #[cfg_attr(target_family = "wasm", wasm_bindgen_test)]
 #[cfg_attr(not(target_family = "wasm"), tokio::test)]
 async fn test_async_call() {
+    setup_logs();
     info!("Starting async_call test...");
 
     let wasm_bytes = load_plugin_wasm();
@@ -151,6 +171,7 @@ async fn test_async_call() {
 #[cfg_attr(target_family = "wasm", wasm_bindgen_test)]
 #[cfg_attr(not(target_family = "wasm"), tokio::test)]
 async fn test_prime_sieve() {
+    setup_logs();
     info!("Starting prime sieve test...");
 
     let wasm_bytes = load_plugin_wasm();

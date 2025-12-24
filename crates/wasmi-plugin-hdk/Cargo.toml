@@ -37,6 +37,7 @@ tracing-wasm = { workspace = true }
 serde-wasm-bindgen = { workspace = true }
 wasmer = { workspace = true, features = ["js-default"] }
 web-sys = { workspace = true, features=["Worker", "MessageEvent", "Blob", "BlobPropertyBag", "Url", "console", "TextDecoder"] }
+wasm-bindgen = { workspace = true }
 wasm-bindgen-futures = { workspace = true }
 wasmer-types = { workspace = true, features=["enable-serde"] }
 

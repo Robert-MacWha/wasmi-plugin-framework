@@ -1,8 +1,9 @@
 //! Web Worker wasmer bridge, running the Wasm module in a Web Worker.
 
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader};
 
 use futures::channel::oneshot::{Receiver, Sender};
+use futures::{AsyncRead, AsyncWrite};
 use thiserror::Error;
 use tracing::{error, info};
 use wasm_bindgen_futures::spawn_local;
@@ -49,8 +50,8 @@ impl WorkerBridge {
     ) -> Result<
         (
             Self,
-            impl Write + Send + Sync + 'static,
-            impl Read + Send + Sync + 'static,
+            impl AsyncWrite + Send + Sync + 'static,
+            impl AsyncRead + Send + Sync + 'static,
         ),
         WorkerBridgeError,
     > {
@@ -245,7 +246,7 @@ async fn load(
 }
 
 impl Bridge for WorkerBridge {
-    fn terminate(self: Box<Self>) {
+    fn terminate(self) {
         self.worker.terminate();
     }
 }

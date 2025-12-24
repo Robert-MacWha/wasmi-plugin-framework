@@ -1,10 +1,16 @@
 //! Shared pipe implementation for worker bridge.
 
-use std::io::{Read, Write};
+use std::{
+    io::{Read, Write},
+    pin::Pin,
+    task::{Context, Poll},
+};
 
+use futures::{AsyncRead, AsyncWrite};
+use wasm_bindgen_futures::JsFuture;
 use web_sys::{
-    js_sys::{self, Int32Array, SharedArrayBuffer, Uint8Array},
-    wasm_bindgen::JsCast,
+    js_sys::{self, Atomics, Int32Array, SharedArrayBuffer, Uint8Array},
+    wasm_bindgen::{JsCast, prelude::wasm_bindgen},
 };
 
 // 4xi32 header: (16 bytes)
@@ -18,6 +24,21 @@ pub struct SharedPipe {
     header: Int32Array,
     data: Uint8Array,
     capacity: u32,
+
+    pending_read: Option<JsFuture>,
+    pending_write: Option<JsFuture>,
+}
+
+#[wasm_bindgen]
+extern "C" {
+    /// The object returned by Atomics.waitAsync
+    pub type WaitAsyncResult;
+
+    #[wasm_bindgen(method, getter, js_name = async)]
+    pub fn is_async(this: &WaitAsyncResult) -> bool;
+
+    #[wasm_bindgen(method, getter)]
+    pub fn value(this: &WaitAsyncResult) -> wasm_bindgen::JsValue;
 }
 
 unsafe impl Send for SharedPipe {}
@@ -34,6 +55,8 @@ impl SharedPipe {
             header: status,
             data,
             capacity,
+            pending_read: None,
+            pending_write: None,
         }
     }
 
@@ -43,32 +66,32 @@ impl SharedPipe {
     }
 
     fn is_closed(&self) -> bool {
-        js_sys::Atomics::load(&self.header, CLOSED_IDX).unwrap() == 1
+        Atomics::load(&self.header, CLOSED_IDX).unwrap() == 1
     }
 
     pub fn close(&self) {
-        js_sys::Atomics::store(&self.header, CLOSED_IDX, 1).unwrap();
+        Atomics::store(&self.header, CLOSED_IDX, 1).unwrap();
         // Notify both pointers to wake up anyone waiting on either end
-        js_sys::Atomics::notify(&self.header, READ_IDX).unwrap();
-        js_sys::Atomics::notify(&self.header, WRITE_IDX).unwrap();
+        Atomics::notify(&self.header, READ_IDX).unwrap();
+        Atomics::notify(&self.header, WRITE_IDX).unwrap();
     }
 
     fn read_idx(&self) -> u32 {
-        js_sys::Atomics::load(&self.header, READ_IDX).unwrap() as u32
+        Atomics::load(&self.header, READ_IDX).unwrap() as u32
     }
 
     fn set_read(&self, value: u32) {
-        js_sys::Atomics::store(&self.header, READ_IDX, value as i32).unwrap();
-        js_sys::Atomics::notify(&self.header, READ_IDX).unwrap();
+        Atomics::store(&self.header, READ_IDX, value as i32).unwrap();
+        Atomics::notify(&self.header, READ_IDX).unwrap();
     }
 
     fn write_idx(&self) -> u32 {
-        js_sys::Atomics::load(&self.header, WRITE_IDX).unwrap() as u32
+        Atomics::load(&self.header, WRITE_IDX).unwrap() as u32
     }
 
     fn set_write(&self, value: u32) {
-        js_sys::Atomics::store(&self.header, WRITE_IDX, value as i32).unwrap();
-        js_sys::Atomics::notify(&self.header, WRITE_IDX).unwrap();
+        Atomics::store(&self.header, WRITE_IDX, value as i32).unwrap();
+        Atomics::notify(&self.header, WRITE_IDX).unwrap();
     }
 
     pub fn buffer(&self) -> SharedArrayBuffer {
@@ -82,6 +105,8 @@ impl Read for SharedPipe {
         let w = self.write_idx();
 
         if r == w {
+            //? Only check if closed when empty, so we can drain remaining data
+            // after close
             if self.is_closed() {
                 return Ok(0);
             }
@@ -153,6 +178,104 @@ impl Write for SharedPipe {
 
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
+    }
+}
+
+impl AsyncRead for SharedPipe {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<std::io::Result<usize>> {
+        //? Check for existing promise
+        if let Some(mut fut) = self.pending_read.take() {
+            if Pin::new(&mut fut).poll(cx).is_pending() {
+                self.pending_read = Some(fut);
+                return Poll::Pending;
+            }
+        }
+
+        //? Try sync read
+        match self.read(buf) {
+            Ok(n) => Poll::Ready(Ok(n)),
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                //? Setup async wait for WRITE_IDX to change
+                let current_w = self.write_idx() as i32;
+                let res: WaitAsyncResult = Atomics::wait_async(&self.header, WRITE_IDX, current_w)
+                    .expect("Atomics.waitAsync should be supported")
+                    .unchecked_into();
+
+                if !res.is_async() {
+                    // res was "not-equal", meaning another thread changed WRITE_IDX
+                    // already. So wake the caller.
+                    cx.waker().wake_by_ref();
+                    return Poll::Pending;
+                }
+
+                let promise: js_sys::Promise = res.value().unchecked_into();
+                let mut fut = JsFuture::from(promise);
+
+                if Pin::new(&mut fut).poll(cx).is_pending() {
+                    self.pending_read = Some(fut);
+                    return Poll::Pending;
+                }
+
+                // Future resolved, meaning WRITE_IDX changed, try read again
+                cx.waker().wake_by_ref();
+                return Poll::Pending;
+            }
+            Err(e) => Poll::Ready(Err(e)),
+        }
+    }
+}
+
+impl AsyncWrite for SharedPipe {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        if let Some(mut fut) = self.pending_write.take() {
+            if Pin::new(&mut fut).poll(cx).is_pending() {
+                self.pending_write = Some(fut);
+                return Poll::Pending;
+            }
+        }
+
+        match self.write(buf) {
+            Ok(n) => Poll::Ready(Ok(n)),
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                // Writer waits for READ_IDX to change (meaning space freed up)
+                let current_r = self.read_idx() as i32;
+                let res: WaitAsyncResult = Atomics::wait_async(&self.header, READ_IDX, current_r)
+                    .expect("waitAsync support required")
+                    .unchecked_into();
+
+                if !res.is_async() {
+                    cx.waker().wake_by_ref();
+                    return Poll::Pending;
+                }
+
+                let mut fut = JsFuture::from(res.value().unchecked_into::<js_sys::Promise>());
+                if Pin::new(&mut fut).poll(cx).is_pending() {
+                    self.pending_write = Some(fut);
+                    return Poll::Pending;
+                }
+
+                cx.waker().wake_by_ref();
+                Poll::Pending
+            }
+            Err(e) => Poll::Ready(Err(e)),
+        }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_close(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        self.close();
+        Poll::Ready(Ok(()))
     }
 }
 

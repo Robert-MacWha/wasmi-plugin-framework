@@ -1,8 +1,7 @@
 //! Native wasmer bridge, running the Wasm module in a separate thread.
 
-use futures::AsyncBufReadExt;
 use futures::io::BufReader;
-use std::io::{Read, Write};
+use futures::{AsyncBufReadExt, AsyncRead, AsyncWrite};
 use thiserror::Error;
 use tokio::spawn;
 use tokio::task::{JoinHandle, spawn_blocking};
@@ -36,8 +35,8 @@ impl NativeBridge {
     ) -> Result<
         (
             Self,
-            impl Write + Send + Sync + 'static,
-            impl Read + Send + Sync + 'static,
+            impl AsyncWrite + Send + Sync + 'static,
+            impl AsyncRead + Send + Sync + 'static,
         ),
         NativeBridgeError,
     > {
@@ -109,7 +108,7 @@ impl NativeBridge {
 }
 
 impl Bridge for NativeBridge {
-    fn terminate(self: Box<Self>) {
+    fn terminate(self) {
         self.stderr_handle.abort();
         self.wasm_handle.abort();
 

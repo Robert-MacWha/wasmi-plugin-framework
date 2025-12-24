@@ -4,4 +4,5 @@ pub mod host_handler;
 pub mod plugin;
 pub mod server;
 mod time;
+mod transport;
 pub mod wasi;
