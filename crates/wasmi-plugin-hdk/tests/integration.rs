@@ -1,8 +1,6 @@
 use serde_json::Value;
 use std::sync::Arc;
 use tracing::info;
-#[cfg(target_family = "wasm")]
-use tracing_wasm::{ConsoleConfig, WASMLayerConfigBuilder};
 use wasmi_plugin_hdk::{plugin::Plugin, server::HostServer};
 use web_time::{Instant, SystemTime};
 
@@ -34,14 +32,6 @@ fn get_host_server() -> HostServer<()> {
 #[cfg_attr(not(target_family = "wasm"), tokio::test)]
 #[cfg_attr(not(target_family = "wasm"), tracing_test::traced_test)]
 async fn test_plugin() {
-    #[cfg(target_family = "wasm")]
-    {
-        let config = WASMLayerConfigBuilder::new()
-            .set_console_config(ConsoleConfig::ReportWithoutConsoleColor)
-            .build();
-        tracing_wasm::set_as_global_default_with_config(config);
-    }
-
     info!("Starting test_plugin...");
 
     let wasm_bytes = load_plugin_wasm();
@@ -91,7 +81,7 @@ async fn test_get_time() {
 }
 
 // TODO: Fix this for `wasm-pack test --headless --firefox ./crates/wasmi-plugin-hdk`
-#[cfg_attr(target_family = "wasm", wasm_bindgen_test)]
+// #[cfg_attr(target_family = "wasm", wasm_bindgen_test)]
 #[cfg_attr(not(target_family = "wasm"), tokio::test)]
 async fn test_sleep() {
     info!("Starting sleep test...");

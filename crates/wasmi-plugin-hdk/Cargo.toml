@@ -41,14 +41,15 @@ wasm-bindgen-futures = { workspace = true }
 wasmer-types = { workspace = true, features=["enable-serde"] }
 
 [dev-dependencies]
-tracing-test = { version = "0.2.5", features = ["no-env-filter"] }
 tracing-subscriber = { workspace = true }
-dhat = "0.3"
-wasm-bindgen-test = "0.3"
 
-# Disables criterion for wasm targets since it's not compatible
-[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+tracing-test = { version = "0.2.5", features = ["no-env-filter"] }
 criterion = "0.8.0"
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"
+web-sys = { version = "0.3", features = ["Performance", "Window"] }
 
 [[bench]]
 name = "benchmark"

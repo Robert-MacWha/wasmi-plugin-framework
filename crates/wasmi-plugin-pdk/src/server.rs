@@ -18,9 +18,6 @@ pub struct PluginServer {
 
 #[derive(Debug, Error)]
 enum PluginServerError {
-    #[error("Missing Request")]
-    MissingRequest,
-
     #[error("Invalid Message: {0:?}")]
     InvalidMessage(RpcMessage),
 

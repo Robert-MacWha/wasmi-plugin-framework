@@ -27,5 +27,6 @@ pkgs.mkShell {
     rust-bin.stable.latest.rust-analyzer
     wasm-pack
     geckodriver
+    wasm-bindgen-cli_0_2_106
   ];
 }
