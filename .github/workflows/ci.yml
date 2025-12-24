@@ -31,6 +31,12 @@ jobs:
     - name: Magic Nix Cache
       uses: DeterminateSystems/magic-nix-cache-action@v8
 
+    - name: Create dummy assets to satisfy compiler
+      run: |
+        mkdir -p crates/worker/pkg
+        touch crates/worker/pkg/worker.js
+        touch crates/worker/pkg/worker_bg.wasm
+
     - run: nix-shell --run "make test-wasm"
     - run: nix-shell --run "make bench-wasm"
   
@@ -42,5 +48,11 @@ jobs:
       uses: DeterminateSystems/nix-installer-action@v14
     - name: Magic Nix Cache
       uses: DeterminateSystems/magic-nix-cache-action@v8
+
+    - name: Create dummy assets to satisfy compiler
+      run: |
+        mkdir -p crates/worker/pkg
+        touch crates/worker/pkg/worker.js
+        touch crates/worker/pkg/worker_bg.wasm
 
     - run: nix-shell --run "make clippy"
