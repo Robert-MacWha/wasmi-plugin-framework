@@ -1,6 +1,6 @@
 #[cfg(not(target_arch = "wasm32"))]
 mod benchmarks {
-    use criterion::{Criterion, criterion_group, criterion_main};
+    use criterion::{Criterion, criterion_group};
     use serde_json::Value;
     use std::sync::{Arc, Once};
     use tokio::runtime::Builder;
@@ -160,11 +160,10 @@ mod benchmarks {
         bench_prime_sieve_large,
         bench_call_many
     );
-    criterion_main!(benches);
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use benchmarks::*;
+criterion::criterion_main!(benchmarks::benches);
 
 #[cfg(target_arch = "wasm32")]
 fn main() {}
