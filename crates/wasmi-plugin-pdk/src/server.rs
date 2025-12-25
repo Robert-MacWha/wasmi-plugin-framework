@@ -3,7 +3,7 @@ use std::io::{BufRead, BufReader, Write};
 use futures::{FutureExt, select};
 use serde::{Serialize, de::DeserializeOwned};
 use thiserror::Error;
-use tracing::info;
+use tracing::{error, info};
 
 use crate::{
     router::{MaybeSend, Router},
@@ -54,7 +54,7 @@ impl PluginServer {
         match self.try_run() {
             Ok(()) => {}
             Err(e) => {
-                eprintln!("Plugin server error: {}", e);
+                error!("PluginServer encountered an error: {:?}", e);
                 std::process::exit(1);
             }
         }
@@ -95,7 +95,17 @@ impl PluginServer {
     fn read_request(&self) -> Result<RpcRequest, PluginServerError> {
         let mut reader = BufReader::new(std::io::stdin());
         let mut line = String::new();
-        reader.read_line(&mut line)?;
+        loop {
+            match reader.read_line(&mut line) {
+                Ok(_) if !line.is_empty() => break,
+                Ok(_) => continue, // EOF or empty read
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    continue;
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+
         let msg: RpcMessage = serde_json::from_str(&line)?;
         let RpcMessage::RpcRequest(msg) = msg else {
             return Err(PluginServerError::InvalidMessage(msg));

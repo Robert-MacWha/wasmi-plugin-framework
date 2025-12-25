@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use crate::{
     rpc_message::{RpcErrorResponse, RpcResponse},
-    transport_driver::{TransportDriver, TransportError},
+    transport_driver::{DriverError, TransportDriver},
 };
 
 pub struct Transport<R = std::io::Stdin, W = std::io::Stdout> {
@@ -30,14 +30,14 @@ impl<R: Read, W: Write> Transport<R, W> {
         (transport, driver)
     }
 
-    pub fn call(&self, method: &str, params: Value) -> Result<RpcResponse, TransportError> {
+    pub fn call(&self, method: &str, params: Value) -> Result<RpcResponse, DriverError> {
         self.driver.call(method, params)
     }
 
     pub fn call_many<I, S>(
         &self,
         calls: I,
-    ) -> Result<Vec<Result<RpcResponse, RpcErrorResponse>>, TransportError>
+    ) -> Result<Vec<Result<RpcResponse, RpcErrorResponse>>, DriverError>
     where
         I: IntoIterator<Item = (S, Value)>,
         S: Into<String>,
@@ -49,7 +49,7 @@ impl<R: Read, W: Write> Transport<R, W> {
         &self,
         method: &str,
         params: Value,
-    ) -> Result<RpcResponse, TransportError> {
+    ) -> Result<RpcResponse, DriverError> {
         self.driver.call_async(method, params).await
     }
 }

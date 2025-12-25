@@ -83,34 +83,11 @@ impl Runtime for NativeRuntime {
         if let Some(session) = self.sessions.lock().await.remove(&instance_id) {
             // TODO: Use gas metering to force terminate the wasm runtime
             session.wasm_handle.abort();
-            session.stderr_handle.abort();
         }
     }
 }
 
 impl NativeRuntime {
-    fn run_instance(
-        compiled: Compiled,
-        stdin: NonBlockingPipeReader,
-        stdout: NonBlockingPipeWriter,
-        stderr: NonBlockingPipeWriter,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let engine = compiled.engine;
-        let module = compiled.module;
-
-        let mut store = Store::new(engine);
-
-        let wasi_ctx = WasiCtx::new()
-            .set_stdin(stdin)
-            .set_stdout(stdout)
-            .set_stderr(stderr);
-
-        let start = wasi_ctx.into_fn(&mut store, &module)?;
-        start.call(&mut store, &[])?;
-
-        Ok(())
-    }
-
     fn wasm_handle(
         compiled: Compiled,
         stdin_reader: NonBlockingPipeReader,
@@ -149,5 +126,27 @@ impl NativeRuntime {
                 }
             }
         })
+    }
+
+    fn run_instance(
+        compiled: Compiled,
+        stdin: NonBlockingPipeReader,
+        stdout: NonBlockingPipeWriter,
+        stderr: NonBlockingPipeWriter,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let engine = compiled.engine;
+        let module = compiled.module;
+
+        let mut store = Store::new(engine);
+
+        let wasi_ctx = WasiCtx::new()
+            .set_stdin(stdin)
+            .set_stdout(stdout)
+            .set_stderr(stderr);
+
+        let start = wasi_ctx.into_fn(&mut store, &module)?;
+        start.call(&mut store, &[])?;
+
+        Ok(())
     }
 }

@@ -31,7 +31,7 @@ impl<R, W> Clone for TransportDriver<R, W> {
 }
 
 #[derive(Debug, Error)]
-pub enum TransportError {
+pub enum DriverError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
@@ -57,8 +57,8 @@ pub enum TransportError {
     MissingResponse,
 }
 
-impl From<TransportError> for RpcError {
-    fn from(value: TransportError) -> Self {
+impl From<DriverError> for RpcError {
+    fn from(value: DriverError) -> Self {
         RpcError::custom(value.to_string())
     }
 }
@@ -73,7 +73,7 @@ impl<R: Read, W: Write> TransportDriver<R, W> {
         }
     }
 
-    pub async fn run(self) -> Result<(), TransportError> {
+    pub async fn run(self) -> Result<(), DriverError> {
         let mut line = String::new();
 
         loop {
@@ -87,7 +87,7 @@ impl<R: Read, W: Write> TransportDriver<R, W> {
         &self,
         method: &str,
         params: Value,
-    ) -> Result<RpcResponse, TransportError> {
+    ) -> Result<RpcResponse, DriverError> {
         let id = self.next_id();
         let request = RpcMessage::request(id, method.to_string(), params);
 
@@ -97,19 +97,19 @@ impl<R: Read, W: Write> TransportDriver<R, W> {
 
         // Await the response
         let res = revc_rx.await?;
-        let res = res.map_err(TransportError::ErrorResponse)?;
+        let res = res.map_err(DriverError::ErrorResponse)?;
         Ok(res)
     }
 
     /// Synchronous call that sends a request and waits for the response. Handles any
     /// unrelated incoming messages while waiting.
-    pub fn call(&self, method: &str, params: Value) -> Result<RpcResponse, TransportError> {
+    pub fn call(&self, method: &str, params: Value) -> Result<RpcResponse, DriverError> {
         let resps = self.call_many(std::iter::once((method, params)))?;
         let resp = resps
             .into_iter()
             .next()
-            .ok_or(TransportError::MissingResponse)?;
-        let resp = resp.map_err(TransportError::ErrorResponse)?;
+            .ok_or(DriverError::MissingResponse)?;
+        let resp = resp.map_err(DriverError::ErrorResponse)?;
         Ok(resp)
     }
 
@@ -118,7 +118,7 @@ impl<R: Read, W: Write> TransportDriver<R, W> {
     pub fn call_many<I, S>(
         &self,
         calls: I,
-    ) -> Result<Vec<Result<RpcResponse, RpcErrorResponse>>, TransportError>
+    ) -> Result<Vec<Result<RpcResponse, RpcErrorResponse>>, DriverError>
     where
         I: IntoIterator<Item = (S, Value)>,
         S: Into<String>,
@@ -156,7 +156,7 @@ impl<R: Read, W: Write> TransportDriver<R, W> {
                     }
                     Ok(None) => {}
                     Err(e) => {
-                        return Err(TransportError::OneshotCanceled(e));
+                        return Err(DriverError::OneshotCanceled(e));
                     }
                 }
             }
@@ -177,12 +177,12 @@ impl<R: Read, W: Write> TransportDriver<R, W> {
         &self,
         reader: &mut std::sync::MutexGuard<'_, BufReader<R>>,
         line: &mut String,
-    ) -> Result<(), TransportError> {
+    ) -> Result<(), DriverError> {
         match reader.read_line(line) {
-            Ok(0) => return Err(TransportError::EOF),
+            Ok(0) => return Err(DriverError::EOF),
             Ok(_) => {}
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => return Ok(()),
-            Err(e) => return Err(TransportError::Io(e)),
+            Err(e) => return Err(DriverError::Io(e)),
         }
 
         let msg: RpcMessage = serde_json::from_str(line)?;
@@ -192,7 +192,7 @@ impl<R: Read, W: Write> TransportDriver<R, W> {
         Ok(())
     }
 
-    fn write_message(&self, message: &RpcMessage) -> Result<(), TransportError> {
+    fn write_message(&self, message: &RpcMessage) -> Result<(), DriverError> {
         let message_str = serde_json::to_string(message)?;
         let msg = format!("{}\n", message_str);
         {
@@ -204,7 +204,7 @@ impl<R: Read, W: Write> TransportDriver<R, W> {
         Ok(())
     }
 
-    fn insert_response(&self, message: RpcMessage) -> Result<(), TransportError> {
+    fn insert_response(&self, message: RpcMessage) -> Result<(), DriverError> {
         match message {
             RpcMessage::RpcResponse(res) => {
                 let sender = self.pending.lock().unwrap().remove(&res.id);
@@ -213,9 +213,7 @@ impl<R: Read, W: Write> TransportDriver<R, W> {
                     return Ok(());
                 };
 
-                sender
-                    .send(Ok(res))
-                    .map_err(|_| TransportError::OneshotSend)?;
+                sender.send(Ok(res)).map_err(|_| DriverError::OneshotSend)?;
             }
             RpcMessage::RpcErrorResponse(res) => {
                 let sender = self.pending.lock().unwrap().remove(&res.id);
@@ -226,7 +224,7 @@ impl<R: Read, W: Write> TransportDriver<R, W> {
 
                 sender
                     .send(Err(res))
-                    .map_err(|_| TransportError::OneshotSend)?;
+                    .map_err(|_| DriverError::OneshotSend)?;
             }
             RpcMessage::RpcRequest(_) => {
                 info!("Ignoring request message");

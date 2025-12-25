@@ -88,7 +88,7 @@ impl<H: HostHandler> Plugin<H> {
             handler,
             logger: Box::new(default_plugin_logger),
             max_fuel: None,
-            timeout: Duration::from_secs(10),
+            timeout: Duration::from_secs(5),
             compiled: Compiled::new(name, &wasm_bytes)?,
         })
     }
