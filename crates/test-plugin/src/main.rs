@@ -38,16 +38,22 @@ async fn call(transport: Transport, _: ()) -> Result<Value, RpcError> {
 }
 
 async fn call_many(transport: Transport, limit: u64) -> Result<(), RpcError> {
-    let calls = (0..limit).map(|_| ("ping", Value::Null));
-    let resp = transport.call_many(calls)?;
+    let mut tasks = vec![];
+    for i in 0..limit {
+        let transport_clone = transport.clone();
+        let task = async move {
+            let resp = transport_clone.call("ping", Value::Null)?;
+            info!("Call {} got response: {:?}", i, resp.result);
+            Ok::<(), RpcError>(())
+        };
+        tasks.push(task);
+    }
 
-    if resp.len() as u64 != limit {
-        error!(
-            "Incorrect number of responses: expected {}, got {}",
-            limit,
-            resp.len()
-        );
-        return Err(RpcError::InternalError);
+    let resps: Vec<Result<(), RpcError>> =
+        futures::future::join_all(tasks).await.into_iter().collect();
+
+    for resp in resps {
+        resp?;
     }
 
     Ok(())

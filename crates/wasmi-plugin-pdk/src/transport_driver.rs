@@ -104,71 +104,32 @@ impl<R: Read, W: Write> TransportDriver<R, W> {
     /// Synchronous call that sends a request and waits for the response. Handles any
     /// unrelated incoming messages while waiting.
     pub fn call(&self, method: &str, params: Value) -> Result<RpcResponse, DriverError> {
-        let resps = self.call_many(std::iter::once((method, params)))?;
-        let resp = resps
-            .into_iter()
-            .next()
-            .ok_or(DriverError::MissingResponse)?;
-        let resp = resp.map_err(DriverError::ErrorResponse)?;
-        Ok(resp)
-    }
+        let id = self.next_id();
+        let request = RpcMessage::request(id, method.to_string(), params);
 
-    /// Synchronous call that sends multiple requests and waits for all responses. Handles
-    /// any unrelated incoming messages while waiting.
-    pub fn call_many<I, S>(
-        &self,
-        calls: I,
-    ) -> Result<Vec<Result<RpcResponse, RpcErrorResponse>>, DriverError>
-    where
-        I: IntoIterator<Item = (S, Value)>,
-        S: Into<String>,
-    {
-        //? Send all requests & collect their IDs
-        let mut receivers = Vec::new();
-        let mut ids = Vec::new();
-        for (method, params) in calls {
-            let id = self.next_id();
-            let (tx, rx) = oneshot::channel();
+        let (res_tx, mut res_rx) = oneshot::channel();
+        self.pending.lock().unwrap().insert(id, res_tx);
+        self.write_message(&request)?;
 
-            self.pending.lock().unwrap().insert(id, tx);
-            self.write_message(&RpcMessage::request(id, method.into(), params))?;
-
-            receivers.push(rx);
-            ids.push(id);
-        }
-
-        let mut results = Vec::new();
         let mut reader = self.reader.lock().unwrap();
         let mut line = String::new();
 
-        //? Drive IO while any responses are still missing
-        while !receivers.is_empty() {
+        // Drive IO until we get the response
+        loop {
             self.step(&mut reader, &mut line)?;
 
-            //? Check for completed responses and collect them, dropping the
-            //? corresponding receivers
-            for i in (0..receivers.len()).rev() {
-                let rx = &mut receivers[i];
-                match rx.try_recv() {
-                    Ok(Some(res)) => {
-                        results.push(res);
-                        let _ = receivers.swap_remove(i);
-                    }
-                    Ok(None) => {}
-                    Err(e) => {
-                        return Err(DriverError::OneshotCanceled(e));
-                    }
+            // Check if we have received the response
+            match res_rx.try_recv() {
+                Ok(Some(res)) => {
+                    let res = res.map_err(DriverError::ErrorResponse)?;
+                    return Ok(res);
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    return Err(DriverError::OneshotCanceled(e));
                 }
             }
         }
-
-        //? Sort into original order
-        results.sort_by_key(|r| match r {
-            Ok(res) => res.id,
-            Err(err) => err.id,
-        });
-
-        Ok(results)
     }
 
     /// Perform a single read step, processing one incoming message if available.

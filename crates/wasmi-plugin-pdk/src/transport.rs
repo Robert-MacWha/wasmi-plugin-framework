@@ -34,17 +34,6 @@ impl<R: Read, W: Write> Transport<R, W> {
         self.driver.call(method, params)
     }
 
-    pub fn call_many<I, S>(
-        &self,
-        calls: I,
-    ) -> Result<Vec<Result<RpcResponse, RpcErrorResponse>>, DriverError>
-    where
-        I: IntoIterator<Item = (S, Value)>,
-        S: Into<String>,
-    {
-        self.driver.call_many(calls)
-    }
-
     pub async fn call_async(
         &self,
         method: &str,
