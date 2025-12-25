@@ -27,7 +27,6 @@ pub struct NativeRuntime {
 
 struct NativeSession {
     wasm_handle: JoinHandle<()>,
-    stderr_handle: JoinHandle<()>,
 }
 
 #[derive(Debug, Error)]
@@ -44,6 +43,12 @@ impl NativeRuntime {
             sessions: Arc::new(Mutex::new(HashMap::default())),
             next_id: Arc::new(AtomicU64::new(1)),
         }
+    }
+}
+
+impl Default for NativeRuntime {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -68,12 +73,9 @@ impl Runtime for NativeRuntime {
         let (stderr_reader, stderr_writer) = non_blocking_pipe();
 
         let wasm_handle = Self::wasm_handle(compiled, stdin_reader, stdout_writer, stderr_writer);
-        let stderr_handle = Self::stderr_handle(name, stderr_reader);
+        Self::spawn_stderr(name, stderr_reader);
 
-        let session = NativeSession {
-            wasm_handle,
-            stderr_handle,
-        };
+        let session = NativeSession { wasm_handle };
 
         self.sessions.lock().await.insert(id, session);
         Ok((id, stdin_writer, stdout_reader))
@@ -102,7 +104,7 @@ impl NativeRuntime {
         })
     }
 
-    fn stderr_handle(name: String, mut stderr_reader: NonBlockingPipeReader) -> JoinHandle<()> {
+    fn spawn_stderr(name: String, mut stderr_reader: NonBlockingPipeReader) {
         spawn(async move {
             let mut stderr = BufReader::new(&mut stderr_reader);
             let mut buffer = String::new();
@@ -125,7 +127,7 @@ impl NativeRuntime {
                     }
                 }
             }
-        })
+        });
     }
 
     fn run_instance(

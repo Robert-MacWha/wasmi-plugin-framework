@@ -28,6 +28,12 @@ impl WorkerRuntime {
     }
 }
 
+impl Default for WorkerRuntime {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Runtime for WorkerRuntime {
     type Error = PoolError;
 

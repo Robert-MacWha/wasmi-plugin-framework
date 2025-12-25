@@ -27,7 +27,7 @@ pub enum TransportError {
     Serde(#[from] serde_json::Error),
 
     #[error("EOF")]
-    EOF,
+    Eof,
 
     #[error("Error Response: {0:?}")]
     ErrorResponse(RpcErrorResponse),
@@ -62,7 +62,7 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Transport<R, W> {
         let mut line = String::new();
         loop {
             match self.reader.read_line(&mut line).await {
-                Ok(0) => return Err(TransportError::EOF),
+                Ok(0) => return Err(TransportError::Eof),
                 Ok(_) => {}
                 Err(e) => return Err(TransportError::Io(e)),
             }

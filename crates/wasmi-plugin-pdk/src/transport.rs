@@ -3,7 +3,7 @@ use std::io::{Read, Write};
 use serde_json::Value;
 
 use crate::{
-    rpc_message::{RpcErrorResponse, RpcResponse},
+    rpc_message::RpcResponse,
     transport_driver::{DriverError, TransportDriver},
 };
 

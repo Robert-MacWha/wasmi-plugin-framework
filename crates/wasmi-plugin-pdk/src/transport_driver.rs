@@ -15,6 +15,7 @@ use crate::rpc_message::{RpcError, RpcErrorResponse, RpcMessage, RpcResponse};
 pub struct TransportDriver<R, W> {
     reader: Arc<Mutex<BufReader<R>>>,
     writer: Arc<Mutex<W>>,
+    #[allow(clippy::type_complexity)]
     pending: Arc<Mutex<HashMap<u64, oneshot::Sender<Result<RpcResponse, RpcErrorResponse>>>>>,
     next_id: Arc<AtomicU64>,
 }
@@ -45,7 +46,7 @@ pub enum DriverError {
     OneshotCanceled(#[from] oneshot::Canceled),
 
     #[error("EOF")]
-    EOF,
+    Eof,
 
     #[error("Unmatched response ID")]
     UnmatchedResponseId,
@@ -140,7 +141,7 @@ impl<R: Read, W: Write> TransportDriver<R, W> {
         line: &mut String,
     ) -> Result<(), DriverError> {
         match reader.read_line(line) {
-            Ok(0) => return Err(DriverError::EOF),
+            Ok(0) => return Err(DriverError::Eof),
             Ok(_) => {}
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => return Ok(()),
             Err(e) => return Err(DriverError::Io(e)),
