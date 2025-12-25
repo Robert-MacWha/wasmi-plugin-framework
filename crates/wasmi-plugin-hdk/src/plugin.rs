@@ -1,7 +1,6 @@
 use std::{fmt::Display, sync::Arc, time::Duration};
 
 use futures::FutureExt;
-use futures::{AsyncRead, AsyncWrite};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
@@ -13,9 +12,10 @@ use wasmi_plugin_pdk::{
     rpc_message::{RpcError, RpcResponse},
 };
 
-use crate::bridge::{self, Bridge};
 use crate::compile::Compiled;
 use crate::host_handler::HostHandler;
+use crate::runtime;
+use crate::runtime::Runtime;
 use crate::time::sleep;
 use crate::transport::{Transport, TransportError};
 
@@ -54,10 +54,10 @@ impl Display for PluginId {
 type Logger = Box<dyn Fn(&str, &str) + Send + Sync>;
 
 /// Plugin is an async-capable instance of a plugin
-pub struct Plugin {
+pub struct Plugin<H: HostHandler> {
     name: String,
     id: PluginId,
-    handler: Arc<dyn HostHandler>,
+    handler: Arc<H>,
     logger: Logger,
     compiled: Compiled,
     timeout: Duration,
@@ -68,19 +68,19 @@ pub struct Plugin {
 
 #[derive(Debug, Error)]
 pub enum PluginError {
-    // #[error("spawn error")]
-    // SpawnError(#[from] SpawnError),
     #[error("Transport error")]
     TransportError(#[from] TransportError),
-    #[error("plugin died")]
-    PluginDied,
+    #[error("Bridge Error")]
+    BridgeError(#[from] Box<dyn std::error::Error>),
+    #[error("Plugin timeout")]
+    PluginTimeout,
 }
 
-impl Plugin {
+impl<H: HostHandler> Plugin<H> {
     pub fn new(
         name: &str,
         wasm_bytes: Vec<u8>,
-        handler: Arc<dyn HostHandler>,
+        handler: Arc<H>,
     ) -> Result<Self, wasmer::CompileError> {
         Ok(Plugin {
             name: name.to_string(),
@@ -124,10 +124,13 @@ impl Plugin {
     }
 }
 
-impl Plugin {
+impl<H: HostHandler + 'static> Plugin<H> {
     pub async fn call(&self, method: &str, params: Value) -> Result<RpcResponse, PluginError> {
-        //? Construct URL from worker bytes
-        let (bridge, stdin_writer, stdout_reader) = self.create_bridge().unwrap();
+        let runtime = self.create_runtime();
+        let (id, stdin_writer, stdout_reader) = runtime
+            .spawn(self.compiled.clone())
+            .await
+            .map_err(|e| PluginError::BridgeError(e.into()))?;
 
         let handler = PluginCallback {
             handler: self.handler.clone(),
@@ -142,48 +145,26 @@ impl Plugin {
         info!("Plugin: Waiting for call to complete or timeout...");
         futures::select! {
             res = transport_task => {
-                bridge.terminate();
+                runtime.terminate(id).await;
                 Ok(res?)
             },
             _ = timeout => {
-                bridge.terminate();
-                Err(PluginError::PluginDied)
+                runtime.terminate(id).await;
+                Err(PluginError::PluginTimeout)
             }
         }
     }
 
     #[allow(clippy::type_complexity)]
     #[cfg(not(target_arch = "wasm32"))]
-    fn create_bridge(
-        &self,
-    ) -> Result<
-        (
-            impl Bridge + Send + Sync + 'static,
-            impl AsyncWrite + Send + Sync + 'static,
-            impl AsyncRead + Send + Sync + 'static,
-        ),
-        PluginError,
-    > {
-        let (bridge, stdin, stdout) = bridge::NativeBridge::new(self.compiled.clone())
-            .map_err(|_| PluginError::PluginDied)?;
-        Ok((bridge, stdin, stdout))
+    fn create_runtime(&self) -> impl Runtime + Send + Sync + 'static {
+        runtime::NativeRuntime::new()
     }
 
     #[allow(clippy::type_complexity)]
     #[cfg(target_arch = "wasm32")]
-    fn create_bridge(
-        &self,
-    ) -> Result<
-        (
-            impl Bridge + Send + Sync + 'static,
-            impl AsyncWrite + Send + Sync + 'static,
-            impl AsyncRead + Send + Sync + 'static,
-        ),
-        PluginError,
-    > {
-        let (bridge, stdin, stdout) = bridge::WorkerBridge::new(self.compiled.clone())
-            .map_err(|_| PluginError::PluginDied)?;
-        Ok((bridge, stdin, stdout))
+    fn create_runtime(&self) -> impl Runtime + Send + Sync + 'static {
+        runtime::WorkerRuntime::new()
     }
 }
 

@@ -6,7 +6,7 @@ use wasm_bindgen::{
     prelude::{Closure, wasm_bindgen},
 };
 use wasmi_plugin_hdk::{
-    bridge::{shared_pipe::SharedPipe, worker_protocol::WorkerMessage},
+    runtime::{shared_pipe::SharedPipe, worker_protocol::WorkerMessage},
     wasi::wasi_ctx::{self, WasiCtx},
 };
 use web_sys::{

@@ -14,7 +14,5 @@ pub enum WorkerMessage {
     Log {
         message: String,
     },
-    Error {
-        message: String,
-    },
+    Idle,
 }
