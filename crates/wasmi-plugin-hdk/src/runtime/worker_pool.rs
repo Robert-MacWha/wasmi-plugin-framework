@@ -9,7 +9,7 @@ use tracing::{error, info};
 use wasm_bindgen::{JsCast, JsValue, prelude::Closure};
 use web_sys::{
     MessageEvent,
-    js_sys::{self, Reflect, Uint8Array},
+    js_sys::{self, Reflect, SharedArrayBuffer, Uint8Array},
 };
 
 use crate::{
@@ -34,6 +34,9 @@ struct WorkerHandle {
     id: WorkerId,
     state: Arc<Mutex<WorkerState>>,
     inner: web_sys::Worker,
+    stdin: SharedArrayBuffer,
+    stdout: SharedArrayBuffer,
+    stderr: SharedArrayBuffer,
 
     //? Store handle to prevent javascript garbage collection
     _on_message: Closure<dyn FnMut(MessageEvent)>,
@@ -58,6 +61,7 @@ enum WorkerState {
     Terminated,
 }
 
+const SHARED_PIPE_CAPACITY: u32 = 16384;
 const WORKER_LOADER_JS: &str = include_str!("worker_loader.js");
 const WORKER_JS_GLUE: &str = include_str!("../../../worker/pkg/worker.js");
 const WORKER_WASM_BYTES: &[u8] = include_bytes!("../../../worker/pkg/worker_bg.wasm");
@@ -78,11 +82,16 @@ impl WorkerPool {
     ) -> Result<(WorkerSession, SharedPipe, SharedPipe), PoolError> {
         let worker = self.get_or_create_worker().await?;
 
-        let stdin = SharedPipe::new_with_capacity(16384);
-        let stdout = SharedPipe::new_with_capacity(16384);
-        let stderr = SharedPipe::new_with_capacity(16384);
+        let stdin = SharedPipe::new(&worker.stdin);
+        let stdout = SharedPipe::new(&worker.stdout);
+        let stderr = SharedPipe::new(&worker.stderr);
 
-        worker.run(compiled, &stdin, &stdout, &stderr)?;
+        // Reset the header (read/write pointers) in the shared memory
+        stdin.reset();
+        stdout.reset();
+        stderr.reset();
+
+        worker.run(compiled)?;
 
         Ok((
             WorkerSession {
@@ -127,26 +136,38 @@ unsafe impl Sync for WorkerHandle {}
 
 impl WorkerHandle {
     pub async fn new(id: WorkerId, script_url: &str) -> Result<Self, PoolError> {
-        let worker = web_sys::Worker::new(script_url).map_err(PoolError::JsValue)?;
+        let inner = web_sys::Worker::new(script_url).map_err(PoolError::JsValue)?;
         let state = Arc::new(Mutex::new(WorkerState::Idle));
 
-        let (ready_tx, ready_rx) = oneshot::channel();
+        let stdin = SharedPipe::new_with_capacity(SHARED_PIPE_CAPACITY).buffer();
+        let stdout = SharedPipe::new_with_capacity(SHARED_PIPE_CAPACITY).buffer();
+        let stderr = SharedPipe::new_with_capacity(SHARED_PIPE_CAPACITY).buffer();
+
+        let (booted_tx, booted_rx) = oneshot::channel();
+        let (init_tx, init_rx) = oneshot::channel();
         let on_message = Closure::wrap(WorkerHandle::on_message_handler(
-            ready_tx,
+            booted_tx,
+            init_tx,
             id,
             state.clone(),
         ));
-        worker.set_onmessage(Some(on_message.as_ref().unchecked_ref()));
+        inner.set_onmessage(Some(on_message.as_ref().unchecked_ref()));
 
-        //? Wait for the worker to signal readiness
-        ready_rx.await?;
-
-        Ok(WorkerHandle {
+        let worker = WorkerHandle {
             id,
             state,
-            inner: worker,
+            inner,
+            stdin,
+            stdout,
+            stderr,
             _on_message: on_message,
-        })
+        };
+
+        booted_rx.await?;
+        worker.initalize()?;
+        init_rx.await?;
+
+        Ok(worker)
     }
 
     pub fn state(&self) -> WorkerState {
@@ -158,24 +179,13 @@ impl WorkerHandle {
         *guard = state;
     }
 
-    pub fn run(
-        &self,
-        compiled: Compiled,
-        stdin: &SharedPipe,
-        stdout: &SharedPipe,
-        stderr: &SharedPipe,
-    ) -> Result<(), PoolError> {
+    pub fn run(&self, compiled: Compiled) -> Result<(), PoolError> {
         self.set_state(WorkerState::Busy);
 
         let wasm_bytes = compiled.module.serialize()?;
         let msg = serde_wasm_bindgen::to_value(&WorkerMessage::Load {
             wasm_module: wasm_bytes.to_vec(),
         })?;
-
-        // Attach SharedArrayBuffers via Reflect
-        Reflect::set(&msg, &"stdin".into(), &stdin.buffer()).map_err(PoolError::JsValue)?;
-        Reflect::set(&msg, &"stdout".into(), &stdout.buffer()).map_err(PoolError::JsValue)?;
-        Reflect::set(&msg, &"stderr".into(), &stderr.buffer()).map_err(PoolError::JsValue)?;
 
         // Transfer WASM buffer to worker
         let uint8_array = Uint8Array::new(
@@ -196,11 +206,13 @@ impl WorkerHandle {
     }
 
     fn on_message_handler(
-        ready_tx: oneshot::Sender<()>,
+        booted_tx: oneshot::Sender<()>,
+        init_tx: oneshot::Sender<()>,
         id: WorkerId,
         state: Arc<Mutex<WorkerState>>,
     ) -> Box<dyn FnMut(MessageEvent)> {
-        let mut ready_tx = Some(ready_tx);
+        let mut booted_tx = Some(booted_tx);
+        let mut init_tx = Some(init_tx);
         Box::new(move |e: MessageEvent| {
             let Ok(msg) = serde_wasm_bindgen::from_value::<WorkerMessage>(e.data()) else {
                 error!(
@@ -214,9 +226,15 @@ impl WorkerHandle {
                 WorkerMessage::Log { message } => {
                     info!("[WORKER_{}] {}", id, message);
                 }
-                WorkerMessage::Ready => {
-                    if let Some(tx) = ready_tx.take() {
-                        info!("[WORKER_{}] Ready", id);
+                WorkerMessage::Booted => {
+                    if let Some(tx) = booted_tx.take() {
+                        info!("[WORKER_{}] Booted", id);
+                        let _ = tx.send(());
+                    }
+                }
+                WorkerMessage::Initialized => {
+                    if let Some(tx) = init_tx.take() {
+                        info!("[WORKER_{}] Initialized", id);
                         let _ = tx.send(());
                     }
                 }
@@ -233,6 +251,19 @@ impl WorkerHandle {
                 }
             }
         })
+    }
+
+    fn initalize(&self) -> Result<(), PoolError> {
+        let init_msg = serde_wasm_bindgen::to_value(&WorkerMessage::Initialize)?;
+
+        Reflect::set(&init_msg, &"stdin".into(), &self.stdin).map_err(PoolError::JsValue)?;
+        Reflect::set(&init_msg, &"stdout".into(), &self.stdout).map_err(PoolError::JsValue)?;
+        Reflect::set(&init_msg, &"stderr".into(), &self.stderr).map_err(PoolError::JsValue)?;
+
+        self.inner
+            .post_message(&init_msg)
+            .map_err(PoolError::JsValue)?;
+        Ok(())
     }
 }
 

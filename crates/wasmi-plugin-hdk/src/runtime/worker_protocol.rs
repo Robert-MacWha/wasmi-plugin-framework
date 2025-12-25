@@ -3,11 +3,16 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum WorkerMessage {
-    Ready,
-    /// Load wasm bytes into the worker. Also has attached stdin/stdout/stderr
-    /// pipes, which are SharedArrayBuffers but can't be serialized.
+    /// Send by the worker when it has booted into WASM and is listening for messages
+    Booted,
+    /// Send by the host to initialize the worker with necessary SABs. Attaches the
+    /// shared memory pipes for stdin, stdout, and stderr (can't be sent via serde
+    /// for reasons).
+    Initialize,
+    /// Send by the worker when it has initialized
+    Initialized,
     Load {
-        /// Serialized wasm module.  
+        /// Serialized wasm module.  Deserialize with `wasmer::Module::deserialize`
         #[serde(with = "serde_bytes")]
         wasm_module: Vec<u8>,
     },

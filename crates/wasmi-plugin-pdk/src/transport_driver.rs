@@ -153,6 +153,7 @@ impl<R: Read, W: Write> TransportDriver<R, W> {
         Ok(())
     }
 
+    // TODO: Catch WouldBlock and retry later
     fn write_message(&self, message: &RpcMessage) -> Result<(), DriverError> {
         let message_str = serde_json::to_string(message)?;
         let msg = format!("{}\n", message_str);

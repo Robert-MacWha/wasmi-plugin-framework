@@ -65,8 +65,10 @@ impl SharedPipe {
         Self::new(&sab)
     }
 
-    fn is_closed(&self) -> bool {
-        Atomics::load(&self.header, CLOSED_IDX).unwrap() == 1
+    pub fn reset(&self) {
+        Atomics::store(&self.header, READ_IDX, 0).unwrap();
+        Atomics::store(&self.header, WRITE_IDX, 0).unwrap();
+        Atomics::store(&self.header, CLOSED_IDX, 0).unwrap();
     }
 
     pub fn close(&self) {
@@ -74,6 +76,10 @@ impl SharedPipe {
         // Notify both pointers to wake up anyone waiting on either end
         Atomics::notify(&self.header, READ_IDX).unwrap();
         Atomics::notify(&self.header, WRITE_IDX).unwrap();
+    }
+
+    fn is_closed(&self) -> bool {
+        Atomics::load(&self.header, CLOSED_IDX).unwrap() == 1
     }
 
     fn read_idx(&self) -> u32 {

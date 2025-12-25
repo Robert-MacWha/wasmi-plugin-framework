@@ -1,5 +1,7 @@
 #![cfg(target_arch = "wasm32")]
 
+use std::sync::OnceLock;
+
 use thiserror::Error;
 use wasm_bindgen::{
     JsCast, JsValue,
@@ -13,6 +15,13 @@ use web_sys::{
     DedicatedWorkerGlobalScope, MessageEvent, console,
     js_sys::{self, SharedArrayBuffer},
 };
+
+static BUFFERS: OnceLock<(SAB, SAB, SAB)> = OnceLock::new();
+
+struct SAB(SharedArrayBuffer);
+
+unsafe impl Send for SAB {}
+unsafe impl Sync for SAB {}
 
 #[derive(Debug, Error)]
 enum WorkerError {
@@ -35,46 +44,63 @@ pub fn start_worker() {
     onmessage.forget();
 
     // Send ready
-    let ready_msg = WorkerMessage::Ready;
-    let ready_msg = serde_wasm_bindgen::to_value(&ready_msg).unwrap();
-    global.post_message(&ready_msg).unwrap();
+    let booted_msg = serde_wasm_bindgen::to_value(&WorkerMessage::Booted).unwrap();
+    global.post_message(&booted_msg).unwrap();
 }
 
 fn on_message(e: MessageEvent) {
-    let Ok(msg) = serde_wasm_bindgen::from_value::<WorkerMessage>(e.data()) else {
-        log("Worker: Failed to deserialize message from Host");
+    let global = js_sys::global().unchecked_into::<DedicatedWorkerGlobalScope>();
+    let data = e.data();
+
+    // Use serde to parse the variant.
+    // If it's "Initialize", it won't have fields in the enum, so we use Reflect.
+    let Ok(msg) = serde_wasm_bindgen::from_value::<WorkerMessage>(data.clone()) else {
+        error("Worker: Failed to deserialize message");
         return;
     };
 
-    let WorkerMessage::Load { wasm_module } = msg else {
-        error("Worker: Received unexpected message type");
-        return;
-    };
+    match msg {
+        WorkerMessage::Initialize => {
+            on_initialize(&global, data);
+        }
 
-    let stdin_buf = get_sab(&e.data(), "stdin");
-    let stdout_buf = get_sab(&e.data(), "stdout");
-    let stderr_buf = get_sab(&e.data(), "stderr");
-
-    let Some(stdin) = stdin_buf else {
-        error("Load message missing stdin SharedArrayBuffer");
-        return;
-    };
-
-    let Some(stdout) = stdout_buf else {
-        error("Load message missing stdout SharedArrayBuffer");
-        return;
-    };
-
-    let Some(stderr) = stderr_buf else {
-        error("Load message missing stderr SharedArrayBuffer");
-        return;
-    };
-
-    if let Err(err) = run_instance(&wasm_module, stdin, stdout, stderr) {
-        error(&format!("Worker: Error running instance: {:?}", err));
-    } else {
-        log("Worker: Instance finished execution");
+        WorkerMessage::Load { wasm_module } => {
+            on_load(global, wasm_module);
+        }
+        _ => {}
     }
+}
+
+fn on_initialize(global: &DedicatedWorkerGlobalScope, data: JsValue) {
+    let stdin_buf = get_sab(&data, "stdin");
+    let stdout_buf = get_sab(&data, "stdout");
+    let stderr_buf = get_sab(&data, "stderr");
+
+    let (Some(si), Some(so), Some(se)) = (stdin_buf, stdout_buf, stderr_buf) else {
+        error("Worker: Initialize message missing SharedArrayBuffers");
+        return;
+    };
+
+    if BUFFERS.set((SAB(si), SAB(so), SAB(se))).is_err() {
+        log("Worker: Warning - Attempted to re-initialize buffers");
+    }
+
+    let msg = serde_wasm_bindgen::to_value(&WorkerMessage::Initialized).unwrap();
+    global.post_message(&msg).unwrap();
+}
+
+fn on_load(global: DedicatedWorkerGlobalScope, wasm_module: Vec<u8>) {
+    let Some((stdin, stdout, stderr)) = BUFFERS.get() else {
+        error("Worker: Received Load message before pipes were initialized");
+        return;
+    };
+
+    if let Err(err) = run_instance(&wasm_module, &stdin.0, &stdout.0, &stderr.0) {
+        error(&format!("Worker: Run error: {:?}", err));
+    }
+
+    let idle_msg = serde_wasm_bindgen::to_value(&WorkerMessage::Idle).unwrap();
+    global.post_message(&idle_msg).unwrap();
 }
 
 fn get_sab(obj: &JsValue, key: &str) -> Option<SharedArrayBuffer> {
@@ -85,13 +111,13 @@ fn get_sab(obj: &JsValue, key: &str) -> Option<SharedArrayBuffer> {
 
 fn run_instance(
     wasm_module: &[u8],
-    stdin: SharedArrayBuffer,
-    stdout: SharedArrayBuffer,
-    stderr: SharedArrayBuffer,
+    stdin: &SharedArrayBuffer,
+    stdout: &SharedArrayBuffer,
+    stderr: &SharedArrayBuffer,
 ) -> Result<(), WorkerError> {
-    let stdin = SharedPipe::new(&stdin);
-    let stdout = SharedPipe::new(&stdout);
-    let stderr = SharedPipe::new(&stderr);
+    let stdin = SharedPipe::new(stdin);
+    let stdout = SharedPipe::new(stdout);
+    let stderr = SharedPipe::new(stderr);
 
     let mut store = wasmer::Store::default();
     let module = unsafe { wasmer::Module::deserialize(&store, wasm_module) }?;
