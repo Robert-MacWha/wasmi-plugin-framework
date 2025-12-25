@@ -79,7 +79,7 @@ impl WorkerPool {
     pub async fn run(
         &mut self,
         compiled: Compiled,
-    ) -> Result<(WorkerSession, SharedPipe, SharedPipe), PoolError> {
+    ) -> Result<(WorkerSession, SharedPipe, SharedPipe, SharedPipe), PoolError> {
         let worker = self.get_or_create_worker().await?;
 
         let stdin = SharedPipe::new(&worker.stdin);
@@ -96,11 +96,11 @@ impl WorkerPool {
         Ok((
             WorkerSession {
                 id: worker.id,
-
                 handle: worker,
             },
             stdin,
             stdout,
+            stderr,
         ))
     }
 
