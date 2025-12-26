@@ -2,7 +2,6 @@ use serde_json::Value;
 use std::sync::{Arc, Once};
 use tracing::info;
 use wasmi_plugin_hdk::{plugin::Plugin, server::HostServer};
-use web_time::{Instant, SystemTime};
 
 #[cfg(target_family = "wasm")]
 use wasm_bindgen_test::*;
@@ -35,7 +34,9 @@ fn setup_logs() {
     {
         INIT.call_once(|| {
             tracing_subscriber::fmt()
-                .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+                .compact()
+                .with_ansi(false)
+                .with_max_level(tracing_subscriber::filter::LevelFilter::INFO)
                 .with_test_writer()
                 .init();
         });
@@ -98,7 +99,7 @@ async fn test_get_time() {
     info!("Get time response: {:?}", response);
 
     let timestamp = response.result.as_u64().unwrap();
-    let now = SystemTime::now()
+    let now = web_time::SystemTime::now()
         .duration_since(web_time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
@@ -120,7 +121,7 @@ async fn test_sleep() {
     let plugin = Plugin::new("test_plugin", wasm_bytes, handler).unwrap();
 
     let sleep_duration = 1500; // milliseconds
-    let start = Instant::now();
+    let start = web_time::Instant::now();
     plugin
         .call("sleep", Value::Number(sleep_duration.into()))
         .await
@@ -158,9 +159,11 @@ async fn test_call_many() {
     let wasm_bytes = load_plugin_wasm();
     let handler = Arc::new(get_host_server());
 
-    let plugin = Plugin::new("test_plugin", wasm_bytes, handler).unwrap();
+    let plugin = Plugin::new("test_plugin", wasm_bytes, handler)
+        .unwrap()
+        .with_timeout(web_time::Duration::from_secs(2));
     plugin
-        .call("call_many", Value::Number(200.into()))
+        .call("call_many", Value::Number(500.into()))
         .await
         .unwrap();
 }
@@ -177,6 +180,24 @@ async fn test_call_async() {
     let plugin = Plugin::new("test_plugin", wasm_bytes, handler).unwrap();
     let resp = plugin.call("call_async", Value::Null).await.unwrap();
     assert_eq!(resp.result.as_str().unwrap(), "pong");
+}
+
+#[cfg_attr(target_family = "wasm", wasm_bindgen_test)]
+#[cfg_attr(not(target_family = "wasm"), tokio::test)]
+async fn test_call_many_async() {
+    setup_logs();
+    info!("Starting call_many_async test...");
+
+    let wasm_bytes = load_plugin_wasm();
+    let handler = Arc::new(get_host_server());
+
+    let plugin = Plugin::new("test_plugin", wasm_bytes, handler)
+        .unwrap()
+        .with_timeout(web_time::Duration::from_secs(2));
+    plugin
+        .call("call_many_async", Value::Number(500.into()))
+        .await
+        .unwrap();
 }
 
 #[cfg_attr(target_family = "wasm", wasm_bindgen_test)]

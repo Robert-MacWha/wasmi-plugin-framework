@@ -12,6 +12,8 @@ use std::task::{Context, Poll, Waker};
 
 use futures::{AsyncRead, AsyncWrite};
 
+use crate::wasi::wasi_ctx::WasiReader;
+
 struct Inner {
     buf: VecDeque<u8>,
     closed: bool,
@@ -62,6 +64,18 @@ impl Read for NonBlockingPipeReader {
         } else {
             Ok(n)
         }
+    }
+}
+
+impl WasiReader for NonBlockingPipeReader {
+    fn is_ready(&self) -> bool {
+        let inner = self.inner.lock().unwrap();
+        !inner.buf.is_empty() || inner.closed
+    }
+
+    fn wait_ready(&self, _timeout: Option<std::time::Duration>) {
+        // TODO: Make native-compatible version of this?
+        // No-op
     }
 }
 

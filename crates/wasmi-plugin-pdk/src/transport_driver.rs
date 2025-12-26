@@ -10,7 +10,10 @@ use thiserror::Error;
 use tracing::info;
 use wasmi_plugin_rt::yield_now;
 
-use crate::rpc_message::{RpcError, RpcErrorResponse, RpcMessage, RpcResponse};
+use crate::{
+    poll_oneoff::wait_for_stdin,
+    rpc_message::{RpcError, RpcErrorResponse, RpcMessage, RpcResponse},
+};
 
 pub struct TransportDriver<R, W> {
     reader: Arc<Mutex<BufReader<R>>>,
@@ -74,7 +77,7 @@ impl<R: Read, W: Write> TransportDriver<R, W> {
         }
     }
 
-    pub async fn run(self) -> Result<(), DriverError> {
+    pub async fn run(&mut self) -> Result<(), DriverError> {
         let mut line = String::new();
 
         loop {
@@ -117,7 +120,7 @@ impl<R: Read, W: Write> TransportDriver<R, W> {
 
         // Drive IO until we get the response
         loop {
-            self.step(&mut reader, &mut line)?;
+            let would_block = self.step(&mut reader, &mut line)?;
 
             // Check if we have received the response
             match res_rx.try_recv() {
@@ -125,7 +128,11 @@ impl<R: Read, W: Write> TransportDriver<R, W> {
                     let res = res.map_err(DriverError::ErrorResponse)?;
                     return Ok(res);
                 }
-                Ok(None) => {}
+                Ok(None) => {
+                    if would_block {
+                        wait_for_stdin();
+                    }
+                }
                 Err(e) => {
                     return Err(DriverError::OneshotCanceled(e));
                 }
@@ -134,16 +141,17 @@ impl<R: Read, W: Write> TransportDriver<R, W> {
     }
 
     /// Perform a single read step, processing one incoming message if available.
-    /// Returns immediately if no message is available.
+    /// Returns Ok(true) if no message was available (WouldBlock) or Ok(false)
+    /// if a message was processed.
     fn step(
         &self,
         reader: &mut std::sync::MutexGuard<'_, BufReader<R>>,
         line: &mut String,
-    ) -> Result<(), DriverError> {
+    ) -> Result<bool, DriverError> {
         match reader.read_line(line) {
             Ok(0) => return Err(DriverError::Eof),
             Ok(_) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => return Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => return Ok(true),
             Err(e) => return Err(DriverError::Io(e)),
         }
 
@@ -151,11 +159,11 @@ impl<R: Read, W: Write> TransportDriver<R, W> {
         line.clear();
 
         self.insert_response(msg)?;
-        Ok(())
+        Ok(false)
     }
 
     // TODO: Catch WouldBlock and retry later
-    fn write_message(&self, message: &RpcMessage) -> Result<(), DriverError> {
+    pub fn write_message(&self, message: &RpcMessage) -> Result<(), DriverError> {
         let message_str = serde_json::to_string(message)?;
         let msg = format!("{}\n", message_str);
         {

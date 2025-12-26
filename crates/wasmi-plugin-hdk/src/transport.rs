@@ -1,21 +1,16 @@
-use std::collections::HashMap;
-
-use futures::{
-    AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, channel::oneshot, io::BufReader,
-};
+use futures::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use serde_json::Value;
 use thiserror::Error;
 use tracing::info;
 use wasmi_plugin_pdk::{
     api::RequestHandler,
-    rpc_message::{RpcError, RpcErrorResponse, RpcMessage, RpcRequest, RpcResponse},
+    rpc_message::{RpcError, RpcErrorResponse, RpcMessage, RpcResponse},
 };
+use wasmi_plugin_rt::yield_now;
 
 pub struct Transport<R, W> {
-    reader: BufReader<R>,
+    reader: R,
     writer: W,
-    pending: HashMap<u64, oneshot::Sender<Result<RpcResponse, RpcErrorResponse>>>,
-    next_id: u64,
 }
 
 #[derive(Debug, Error)]
@@ -31,19 +26,11 @@ pub enum TransportError {
 
     #[error("Error Response: {0:?}")]
     ErrorResponse(RpcErrorResponse),
-
-    #[error("Cancelled")]
-    Cancelled(#[from] oneshot::Canceled),
 }
 
 impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Transport<R, W> {
     pub fn new(reader: R, writer: W) -> Self {
-        Transport {
-            reader: BufReader::new(reader),
-            writer,
-            pending: HashMap::new(),
-            next_id: 0,
-        }
+        Transport { reader, writer }
     }
 
     pub async fn call(
@@ -52,28 +39,44 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Transport<R, W> {
         params: Value,
         handler: Option<impl RequestHandler<RpcError>>,
     ) -> Result<RpcResponse, TransportError> {
-        let id = self.next_id();
+        let id = 1;
         let request = RpcMessage::request(id, method.to_string(), params);
         self.write_message(request).await?;
 
-        let (resp_tx, mut resp_rx) = oneshot::channel();
-        self.pending.insert(id, resp_tx);
+        let mut buffer = Vec::new();
+        let mut temp = [0u8; 256];
 
-        let mut line = String::new();
         loop {
-            match self.reader.read_line(&mut line).await {
+            match self.reader.read(&mut temp).await {
                 Ok(0) => return Err(TransportError::Eof),
-                Ok(_) => {}
+                Ok(n) => {
+                    buffer.extend_from_slice(&temp[..n]);
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    yield_now().await;
+                    continue;
+                }
                 Err(e) => return Err(TransportError::Io(e)),
             }
 
-            let msg: RpcMessage = serde_json::from_str(&line)?;
-            line.clear();
-            self.handle_incoming(msg, &handler).await?;
+            // Process complete lines
+            while let Some(pos) = buffer.iter().position(|&b| b == b'\n') {
+                let line = String::from_utf8_lossy(&buffer[..pos]).to_string();
+                buffer.drain(..=pos);
 
-            if let Some(res) = resp_rx.try_recv()? {
-                let resp = res.map_err(TransportError::ErrorResponse)?;
-                return Ok(resp);
+                let msg: RpcMessage = serde_json::from_str(&line)?;
+
+                match msg {
+                    RpcMessage::RpcResponse(resp) if resp.id == id => return Ok(resp),
+                    RpcMessage::RpcErrorResponse(err) if err.id == id => {
+                        return Err(TransportError::ErrorResponse(err));
+                    }
+                    RpcMessage::RpcRequest(req) => {
+                        self.handle_guest_req(req.id, &req.method, req.params, &handler)
+                            .await?;
+                    }
+                    _ => {}
+                }
             }
         }
     }
@@ -87,44 +90,28 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Transport<R, W> {
         Ok(())
     }
 
-    async fn handle_incoming(
+    async fn handle_guest_req(
         &mut self,
-        msg: RpcMessage,
+        id: u64,
+        method: &str,
+        params: Value,
         handler: &Option<impl RequestHandler<RpcError>>,
     ) -> Result<(), TransportError> {
-        match msg {
-            RpcMessage::RpcResponse(resp) => {
-                self.pending.remove(&resp.id).map(|tx| tx.send(Ok(resp)));
-            }
-            RpcMessage::RpcErrorResponse(err) => {
-                self.pending.remove(&err.id).map(|tx| tx.send(Err(err)));
-            }
-            RpcMessage::RpcRequest(RpcRequest {
-                id, method, params, ..
-            }) => {
-                let Some(handler) = handler else {
-                    info!("No handler, request ignored");
-                    return Ok(());
-                };
+        let Some(handler) = handler else {
+            info!("No handler, request ignored");
+            return Ok(());
+        };
 
-                match handler.handle(&method, params).await {
-                    Ok(result) => {
-                        self.write_message(RpcMessage::response(id, result)).await?;
-                    }
-                    Err(error) => {
-                        self.write_message(RpcMessage::error_response(id, error))
-                            .await?;
-                    }
-                }
+        match handler.handle(method, params).await {
+            Ok(result) => {
+                self.write_message(RpcMessage::response(id, result)).await?;
+            }
+            Err(error) => {
+                self.write_message(RpcMessage::error_response(id, error))
+                    .await?;
             }
         }
 
         Ok(())
-    }
-
-    fn next_id(&mut self) -> u64 {
-        let id = self.next_id;
-        self.next_id += 1;
-        id
     }
 }

@@ -142,7 +142,6 @@ impl<H: HostHandler + 'static> Plugin<H> {
         let timeout = sleep(self.timeout).fuse();
         futures::pin_mut!(transport_task, timeout);
 
-        info!("Plugin: Waiting for call to complete or timeout...");
         futures::select! {
             res = transport_task => {
                 runtime.terminate(id).await;

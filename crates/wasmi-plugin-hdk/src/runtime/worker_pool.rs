@@ -36,7 +36,6 @@ struct WorkerHandle {
     inner: web_sys::Worker,
     stdin: SharedArrayBuffer,
     stdout: SharedArrayBuffer,
-    stderr: SharedArrayBuffer,
 
     //? Store handle to prevent javascript garbage collection
     _on_message: Closure<dyn FnMut(MessageEvent)>,
@@ -79,17 +78,15 @@ impl WorkerPool {
     pub async fn run(
         &mut self,
         compiled: Compiled,
-    ) -> Result<(WorkerSession, SharedPipe, SharedPipe, SharedPipe), PoolError> {
+    ) -> Result<(WorkerSession, SharedPipe, SharedPipe), PoolError> {
         let worker = self.get_or_create_worker().await?;
 
-        let stdin = SharedPipe::new(&worker.stdin);
-        let stdout = SharedPipe::new(&worker.stdout);
-        let stderr = SharedPipe::new(&worker.stderr);
+        let stdin = SharedPipe::new("HOST_STDIN", &worker.stdin);
+        let stdout = SharedPipe::new("HOST_STDOUT", &worker.stdout);
 
         // Reset the header (read/write pointers) in the shared memory
         stdin.reset();
         stdout.reset();
-        stderr.reset();
 
         worker.run(compiled)?;
 
@@ -100,7 +97,6 @@ impl WorkerPool {
             },
             stdin,
             stdout,
-            stderr,
         ))
     }
 
@@ -139,9 +135,8 @@ impl WorkerHandle {
         let inner = web_sys::Worker::new(script_url).map_err(PoolError::JsValue)?;
         let state = Arc::new(Mutex::new(WorkerState::Idle));
 
-        let stdin = SharedPipe::new_with_capacity(SHARED_PIPE_CAPACITY).buffer();
-        let stdout = SharedPipe::new_with_capacity(SHARED_PIPE_CAPACITY).buffer();
-        let stderr = SharedPipe::new_with_capacity(SHARED_PIPE_CAPACITY).buffer();
+        let stdin = SharedPipe::new_with_capacity("HOST_STDIN", SHARED_PIPE_CAPACITY).buffer();
+        let stdout = SharedPipe::new_with_capacity("HOST_STDOUT", SHARED_PIPE_CAPACITY).buffer();
 
         let (booted_tx, booted_rx) = oneshot::channel();
         let (init_tx, init_rx) = oneshot::channel();
@@ -159,7 +154,6 @@ impl WorkerHandle {
             inner,
             stdin,
             stdout,
-            stderr,
             _on_message: on_message,
         };
 
@@ -185,6 +179,7 @@ impl WorkerHandle {
         let wasm_bytes = compiled.module.serialize()?;
         let msg = serde_wasm_bindgen::to_value(&WorkerMessage::Load {
             wasm_module: wasm_bytes.to_vec(),
+            name: compiled.name.clone(),
         })?;
 
         // Transfer WASM buffer to worker
@@ -201,6 +196,13 @@ impl WorkerHandle {
     }
 
     pub fn terminate(&self) {
+        //? Create temp SharedPipe instances to dump their state to logs
+        // let stdin = SharedPipe::new("DUMP_STDIN", &self.stdin);
+        // let stdout = SharedPipe::new("DUMP_STDOUT", &self.stdout);
+
+        // stdin.dump();
+        // stdout.dump();
+
         self.inner.terminate();
         self.set_state(WorkerState::Terminated);
     }
@@ -225,6 +227,9 @@ impl WorkerHandle {
             match msg {
                 WorkerMessage::Log { message } => {
                     info!("[WORKER_{}] {}", id, message);
+                }
+                WorkerMessage::PluginLog { message } => {
+                    info!("[PLUGIN_{}] {}", id, message);
                 }
                 WorkerMessage::Booted => {
                     if let Some(tx) = booted_tx.take() {
@@ -258,7 +263,6 @@ impl WorkerHandle {
 
         Reflect::set(&init_msg, &"stdin".into(), &self.stdin).map_err(PoolError::JsValue)?;
         Reflect::set(&init_msg, &"stdout".into(), &self.stdout).map_err(PoolError::JsValue)?;
-        Reflect::set(&init_msg, &"stderr".into(), &self.stderr).map_err(PoolError::JsValue)?;
 
         self.inner
             .post_message(&init_msg)

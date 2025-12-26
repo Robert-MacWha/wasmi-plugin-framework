@@ -1,10 +1,18 @@
-use std::io::{BufRead, Read, Write};
+use std::io::{BufReader, Read, Write};
 use thiserror::Error;
 use tracing::{error, info, trace, warn};
 use wasmer::{FunctionEnvMut, RuntimeError};
 use web_time::{Duration, Instant, SystemTime};
 
 use crate::time::blocking_sleep;
+
+pub trait WasiReader: Read + Send + Sync {
+    /// Blocks the current thread until the reader is ready to read, or the timeout is reached.
+    fn wait_ready(&self, timeout: Option<Duration>);
+
+    /// Returns true if the reader is ready to read without blocking.
+    fn is_ready(&self) -> bool;
+}
 
 /// A WASI context that can be attached to a wasmi instance. Attaches
 /// a subset of WASI syscalls to the instance, allowing it to
@@ -18,7 +26,7 @@ use crate::time::blocking_sleep;
 pub struct WasiCtx {
     args: Vec<String>,
     env: Vec<String>,
-    stdin_reader: Option<Box<dyn BufRead + Send + Sync>>,
+    stdin_reader: Option<Box<BufReader<dyn WasiReader>>>,
     stdout_writer: Option<Box<dyn Write + Send + Sync>>,
     stderr_writer: Option<Box<dyn Write + Send + Sync>>,
 
@@ -74,7 +82,7 @@ impl WasiCtx {
         self
     }
 
-    pub fn set_stdin<R: Read + Send + Sync + 'static>(mut self, reader: R) -> Self {
+    pub fn set_stdin<R: WasiReader + Send + Sync + 'static>(mut self, reader: R) -> Self {
         let reader = std::io::BufReader::new(reader);
         self.stdin_reader = Some(Box::new(reader));
         self
@@ -371,6 +379,10 @@ pub fn fd_write(
                         break; // partial write, stop
                     }
                 }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    // Spin until writable
+                    continue;
+                }
                 Err(_) => return Errno::Io as i32,
             }
         }
@@ -499,6 +511,57 @@ pub fn random_get(mut env: FunctionEnvMut<WasiCtx>, buf_ptr: i32, buf_len: i32) 
 }
 
 const CLOCK_EVENT_TYPE: u8 = 0;
+const FD_READ_EVENT_TYPE: u8 = 1;
+#[allow(dead_code)]
+const FD_WRITE_EVENT_TYPE: u8 = 2;
+
+#[repr(C, packed)]
+#[derive(Copy, Clone)]
+struct WasiSubscription {
+    userdata: u64,
+    type_: u8,
+    _padding: [u8; 7],
+    union: WasiSubscriptionUnion,
+}
+
+#[repr(C, packed)]
+#[derive(Copy, Clone)]
+union WasiSubscriptionUnion {
+    clock: WasiSubscriptionClock,
+    fd_readwrite: WasiSubscriptionFdReadWrite,
+}
+
+#[repr(C, packed)]
+#[derive(Copy, Clone)]
+struct WasiSubscriptionClock {
+    id: u32,
+    _padding: [u8; 4],
+    timeout: u64,
+    precision: u64,
+    flags: u16,
+}
+
+#[repr(C, packed)]
+#[derive(Copy, Clone)]
+struct WasiSubscriptionFdReadWrite {
+    fd: u32,
+}
+
+#[repr(C, packed)]
+struct WasiEvent {
+    userdata: u64,
+    error: u16,
+    type_: u8,
+    _padding: [u8; 5],
+    fd_readwrite: WasiEventFdReadWrite,
+}
+
+#[repr(C, packed)]
+struct WasiEventFdReadWrite {
+    nbytes: u64,
+    flags: u16,
+    _padding: [u8; 6],
+}
 
 pub fn poll_oneoff(
     mut env: FunctionEnvMut<WasiCtx>,
@@ -521,117 +584,141 @@ pub fn poll_oneoff(
     let memory = ctx.memory.as_ref().expect("Memory not initialized");
     let view = memory.view(&store);
 
-    let mut clock_subscriptions = Vec::new();
+    //? Currently only supports a single clock / stdin subscription, and doesn't
+    //? support stdout. Takes the earliest clock and the last stdin subscription.
+
+    // TODO: Add stdout support (via similar wait_ready mechanism as stdin)
+    // TODO: Support multiple file descriptors concurrently. Perhaps change
+    // the wait_* mechanism to async and select across multiple futures?
+
+    let mut stdin_sub: Option<WasiSubscriptionFdReadWrite> = None;
+    let mut stdin_userdata: u64 = 0;
+
+    // Time at which earliest clock sub will resolve
+    let mut earliest_clock_sub_time: Option<u64> = None;
+    let mut earliest_clock_sub: Option<WasiSubscriptionClock> = None;
+    let mut clock_userdata: u64 = 0;
     for i in 0..nsubscriptions {
         // Each subscription is 48 bytes
         let sub_offset = (subs_ptr as usize) + (i as usize * 48);
-
-        // Read the subscription struct
-        // subscription layout (48 bytes total):
-        // - userdata: u64 at offset 0
-        // - type: u8 at offset 8 (eventtype: 0=clock, 1=fd_read, 2=fd_write)
-        // - padding: 7 bytes
-        // - union data: 32 bytes at offset 16
-        //
-        // For clock subscription (subscription_clock at offset 16):
-        // - id: u32 (clockid) at offset 16
-        // - padding: 4 bytes
-        // - timeout: u64 (timestamp) at offset 24
-        // - precision: u64 (timestamp) at offset 32
-        // - flags: u16 (subclockflags) at offset 40
-
         let mut sub_bytes = [0u8; 48];
         view.read(sub_offset as u64, &mut sub_bytes).unwrap();
 
-        let userdata = u64::from_le_bytes(sub_bytes[0..8].try_into().unwrap());
-        let sub_type = sub_bytes[8];
+        // Cast bytes to struct
+        let sub = unsafe { &*(sub_bytes.as_ptr() as *const WasiSubscription) };
 
-        if sub_type != CLOCK_EVENT_TYPE {
-            warn!(
-                "poll_oneoff: only clock subscriptions supported, got type {}",
-                sub_type
-            );
-            continue;
+        match sub.type_ {
+            CLOCK_EVENT_TYPE => {
+                let clock = unsafe { sub.union.clock };
+                let is_absolute = (clock.flags & 1) != 0;
+
+                //? Convert to absolute time if required
+                let timeout_ns = if is_absolute {
+                    clock.timeout
+                } else {
+                    match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
+                        Ok(dur) => dur.as_nanos() as u64 + clock.timeout,
+                        Err(_) => return Errno::Inval as i32, // time before epoch shouldn't happen
+                    }
+                };
+
+                //? Keep the earliest clock subscription
+                if earliest_clock_sub_time.is_none()
+                    || timeout_ns < earliest_clock_sub_time.unwrap()
+                {
+                    earliest_clock_sub_time = Some(timeout_ns);
+                    earliest_clock_sub = Some(clock);
+                    clock_userdata = sub.userdata;
+                }
+            }
+            FD_READ_EVENT_TYPE => {
+                let fd_read = unsafe { sub.union.fd_readwrite };
+
+                // Only support stdin (fd 0) for now
+                if fd_read.fd != 0 {
+                    warn!("poll_oneoff: only fd_read on stdin (fd 0) is supported");
+                    continue;
+                }
+                stdin_sub = Some(fd_read);
+                stdin_userdata = sub.userdata;
+            }
+            _ => {
+                warn!("poll_oneoff: unsupported subscription type {}", sub.type_);
+                continue;
+            }
         }
-
-        let clock_id = u32::from_le_bytes(sub_bytes[16..20].try_into().unwrap());
-        let timeout_ns = u64::from_le_bytes(sub_bytes[24..32].try_into().unwrap());
-        let precision_ns = u64::from_le_bytes(sub_bytes[32..40].try_into().unwrap());
-        let flags = u16::from_le_bytes(sub_bytes[40..42].try_into().unwrap());
-
-        if clock_id > 1 {
-            // Only realtime (0) and monotonic (1)
-            warn!("poll_oneoff: unsupported clock_id {}", clock_id);
-            continue;
-        }
-
-        let is_absolute = (flags & 1) != 0;
-        trace!(
-            "poll_oneoff: clock_id={}, timeout={}, precision={}, flags={:#x}, is_absolute={}",
-            clock_id, timeout_ns, precision_ns, flags, is_absolute
-        );
-
-        clock_subscriptions.push((userdata, clock_id, timeout_ns, is_absolute));
     }
 
-    info!(
-        "poll_oneoff: {} clock subscriptions",
-        clock_subscriptions.len()
-    );
-
-    if clock_subscriptions.is_empty() {
-        warn!("poll_oneoff: no valid clock subscriptions found");
+    //? If no subscriptions were found, return error
+    if stdin_sub.is_none() && earliest_clock_sub.is_none() {
+        warn!("poll_oneoff: no valid subscriptions found");
         return Errno::Inval as i32;
     }
 
-    // Convert all relative timeouts to absolute deadlines
-    let now_ns = match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
-        Ok(dur) => dur.as_nanos() as u64,
-        Err(_) => return Errno::Inval as i32, // time before epoch shouldn't happen
-    };
-
-    clock_subscriptions.iter_mut().for_each(|sub| {
-        if !sub.3 {
-            sub.2 = now_ns.saturating_add(sub.2);
+    let clock_duration = earliest_clock_sub_time.map(|deadline| {
+        let now_ns = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as u64;
+        if deadline > now_ns {
+            Duration::from_nanos(deadline - now_ns)
+        } else {
+            Duration::from_nanos(0)
         }
     });
 
-    // Find the earliest deadline
-    let (earliest_userdata, _earliest_clock_id, earliest_deadline_ns, _) =
-        clock_subscriptions.iter().min_by_key(|sub| sub.2).unwrap();
-
-    // Just blocking sleep until the earliest deadline is hit.
-    if earliest_deadline_ns > &now_ns {
-        let wait_duration = Duration::from_nanos(earliest_deadline_ns - now_ns);
-
-        blocking_sleep(wait_duration);
+    //? If there's a stdin subscription, wait on that with the clock as timeout. Otherwise just wait on the clock.
+    if stdin_sub.is_some()
+        && let Some(reader) = &ctx.stdin_reader
+    {
+        trace!("poll_oneoff: waiting for stdin or clock timeout...");
+        let reader = reader.get_ref();
+        reader.wait_ready(clock_duration);
+    } else if let Some(duration) = clock_duration {
+        trace!("poll_oneoff: waiting for clock timeout...");
+        blocking_sleep(duration);
     }
 
-    // Write the event for the earliest deadline
-    // size: 32
-    // - userdata: at offset 0
-    // - error: at offset 8
-    // - type: at offset 10
-    // - fd_readwrite: at offset 16 (empty for clock events)
-    let mut event_buf = [0u8; 32];
-    event_buf[0..8].copy_from_slice(&earliest_userdata.to_le_bytes());
-    event_buf[8..10].copy_from_slice(&(Errno::Success as u16).to_le_bytes());
-    event_buf[10] = CLOCK_EVENT_TYPE;
-    // fd_readwrite is empty for clock events
+    let mut events_written = 0;
 
-    info!(
-        "Writing event: userdata={}, error={}, type={}",
-        earliest_userdata,
-        Errno::Success as u16,
-        CLOCK_EVENT_TYPE
-    );
-    info!("Event buffer: {:?}", &event_buf[..16]);
+    // 1. Check if Stdin is ready (Data available or Pipe Closed)
+    if let Some(_sub) = stdin_sub {
+        if let Some(reader) = &ctx.stdin_reader {
+            if reader.get_ref().is_ready() {
+                write_event(
+                    &view,
+                    events_ptr,
+                    events_written,
+                    stdin_userdata,
+                    FD_READ_EVENT_TYPE,
+                );
+                events_written += 1;
+            }
+        }
+    }
 
-    let event_offset = events_ptr as usize;
-    view.write(event_offset as u64, &event_buf).unwrap();
+    // 2. Check if Clock has expired
+    if let Some(deadline_ns) = earliest_clock_sub_time {
+        let now_ns = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as u64;
 
-    // Write number of events (1) into result_ptr
-    view.write(result_ptr as u64, &1u32.to_le_bytes()).unwrap();
+        if now_ns >= deadline_ns {
+            write_event(
+                &view,
+                events_ptr,
+                events_written,
+                clock_userdata,
+                CLOCK_EVENT_TYPE,
+            );
+            events_written += 1;
+        }
+    }
+
+    // Write number of events triggered to result_ptr
+    view.write(result_ptr as u64, &events_written.to_le_bytes())
+        .unwrap();
 
     Errno::Success as i32
 }
@@ -660,6 +747,29 @@ pub fn proc_raise(_: FunctionEnvMut<WasiCtx>, sig: i32) -> Result<(), RuntimeErr
 pub fn proc_exit(_: FunctionEnvMut<WasiCtx>, status: i32) -> Result<(), RuntimeError> {
     info!("wasi proc_exit({})", status);
     Err(RuntimeError::new(format!("exit: {}", status)))
+}
+
+fn write_event(view: &wasmer::MemoryView, events_ptr: i32, index: u32, userdata: u64, type_: u8) {
+    let event = WasiEvent {
+        userdata,
+        error: 0, // Errno::Success
+        type_,
+        _padding: [0; 5],
+        fd_readwrite: WasiEventFdReadWrite {
+            nbytes: 0,
+            flags: 0,
+            _padding: [0; 6],
+        },
+    };
+
+    let offset = (events_ptr as u64) + (index as u64 * 32);
+    let bytes: [u8; 32] = unsafe { std::mem::transmute(event) };
+    view.write(offset, &bytes).unwrap();
+
+    trace!(
+        "poll_oneoff: Wrote event type {} for userdata {}",
+        type_, userdata
+    );
 }
 
 fn write_pointer_and_string(

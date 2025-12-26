@@ -64,6 +64,28 @@ async fn call_async(transport: Transport, _: ()) -> Result<Value, RpcError> {
     Ok(resp.result)
 }
 
+async fn call_many_async(transport: Transport, limit: u64) -> Result<(), RpcError> {
+    let mut tasks = vec![];
+    for i in 0..limit {
+        let transport_clone = transport.clone();
+        let task = async move {
+            let resp = transport_clone.call_async("ping", Value::Null).await?;
+            info!("Call {} got response: {:?}", i, resp.result);
+            Ok::<(), RpcError>(())
+        };
+        tasks.push(task);
+    }
+
+    let resps: Vec<Result<(), RpcError>> =
+        futures::future::join_all(tasks).await.into_iter().collect();
+
+    for resp in resps {
+        resp?;
+    }
+
+    Ok(())
+}
+
 async fn prime_sieve(_transport: Transport, limit: u64) -> Result<Value, RpcError> {
     let limit = limit as usize;
     let primes = sieve_of_eratosthenes(limit);
@@ -112,6 +134,7 @@ fn main() {
         .with_method("call", call)
         .with_method("call_many", call_many)
         .with_method("call_async", call_async)
+        .with_method("call_many_async", call_many_async)
         .with_method("prime_sieve", prime_sieve)
         .run();
 }

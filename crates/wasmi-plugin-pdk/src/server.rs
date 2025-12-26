@@ -1,4 +1,4 @@
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader};
 
 use futures::{FutureExt, select};
 use serde::{Serialize, de::DeserializeOwned};
@@ -30,6 +30,9 @@ enum PluginServerError {
 
     #[error("RPC error: {0}")]
     Rpc(#[from] RpcError),
+
+    #[error("Transport driver error: {0}")]
+    TransportDriver(#[from] crate::transport_driver::DriverError),
 }
 
 #[allow(clippy::new_without_default)]
@@ -65,8 +68,8 @@ impl PluginServer {
         let request = self.read_request()?;
         info!("PluginServer: Received request: {:?}", request);
 
-        let (transport, driver) = Transport::new(std::io::stdin(), std::io::stdout());
-        let resp = futures::executor::block_on(async move {
+        let (transport, mut driver) = Transport::new(std::io::stdin(), std::io::stdout());
+        let resp = futures::executor::block_on(async {
             select! {
                 res = self.router.handle_with_state(transport, &request.method, request.params).fuse() => {
                     res
@@ -83,11 +86,7 @@ impl PluginServer {
             Err(error) => RpcMessage::error_response(request.id, error),
         };
         info!("PluginServer: Sending response: {:?}", resp);
-
-        let serialized = serde_json::to_string(&resp)?;
-        let msg = format!("{}\n", serialized);
-        std::io::stdout().write_all(msg.as_bytes())?;
-        std::io::stdout().flush()?;
+        driver.write_message(&resp)?;
 
         Ok(())
     }

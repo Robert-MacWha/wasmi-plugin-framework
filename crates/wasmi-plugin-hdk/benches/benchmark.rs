@@ -31,7 +31,9 @@ mod benchmarks {
     fn setup_logs() {
         INIT.call_once(|| {
             tracing_subscriber::fmt()
-                .with_env_filter(EnvFilter::from_default_env())
+                .compact()
+                .with_ansi(false)
+                .with_max_level(tracing_subscriber::filter::LevelFilter::TRACE)
                 .with_test_writer()
                 .init();
         });

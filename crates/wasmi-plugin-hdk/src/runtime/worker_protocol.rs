@@ -15,8 +15,12 @@ pub enum WorkerMessage {
         /// Serialized wasm module.  Deserialize with `wasmer::Module::deserialize`
         #[serde(with = "serde_bytes")]
         wasm_module: Vec<u8>,
+        name: String,
     },
     Log {
+        message: String,
+    },
+    PluginLog {
         message: String,
     },
     Idle,

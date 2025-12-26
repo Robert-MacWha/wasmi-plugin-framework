@@ -1,18 +1,21 @@
 //! Shared pipe implementation for worker bridge.
 
 use std::{
+    f64,
     io::{Read, Write},
     pin::Pin,
     task::{Context, Poll},
 };
 
 use futures::{AsyncRead, AsyncWrite};
+use tracing::info;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{
     js_sys::{self, Atomics, Int32Array, SharedArrayBuffer, Uint8Array},
     wasm_bindgen::{JsCast, prelude::wasm_bindgen},
 };
 
+use crate::wasi::wasi_ctx::WasiReader;
 // 4xi32 header: (16 bytes)
 const CLOSED_IDX: u32 = 0; // 0 = open, 1 = closed
 const WRITE_IDX: u32 = 1;
@@ -25,6 +28,7 @@ pub struct SharedPipe {
     data: Uint8Array,
     capacity: u32,
 
+    name: String,
     pending_read: Option<JsFuture>,
     pending_write: Option<JsFuture>,
 }
@@ -45,7 +49,7 @@ unsafe impl Send for SharedPipe {}
 unsafe impl Sync for SharedPipe {}
 
 impl SharedPipe {
-    pub fn new(sab: &SharedArrayBuffer) -> Self {
+    pub fn new(name: &str, sab: &SharedArrayBuffer) -> Self {
         let status = js_sys::Int32Array::new_with_byte_offset_and_length(&sab, 0, 4);
         let data_len = sab.byte_length() - DATA_OFFSET;
         let data = js_sys::Uint8Array::new_with_byte_offset_and_length(&sab, DATA_OFFSET, data_len);
@@ -55,14 +59,15 @@ impl SharedPipe {
             header: status,
             data,
             capacity,
+            name: name.to_string(),
             pending_read: None,
             pending_write: None,
         }
     }
 
-    pub fn new_with_capacity(capacity: u32) -> Self {
+    pub fn new_with_capacity(name: &str, capacity: u32) -> Self {
         let sab = SharedArrayBuffer::new((DATA_OFFSET + capacity) as u32);
-        Self::new(&sab)
+        Self::new(name, &sab)
     }
 
     pub fn reset(&self) {
@@ -78,8 +83,49 @@ impl SharedPipe {
         Atomics::notify(&self.header, WRITE_IDX).unwrap();
     }
 
+    pub fn buffer(&self) -> SharedArrayBuffer {
+        self.header.buffer().unchecked_into::<SharedArrayBuffer>()
+    }
+
+    pub fn dump(&self) {
+        //? Dumps internal state to logs for debugging
+        let closed = self.is_closed();
+        let r = self.read_idx();
+        let w = self.write_idx();
+        let occupied = self.get_occupied(r, w);
+
+        let last_byte_count = occupied.min(50);
+        let last_bytes = if occupied == 0 {
+            vec![]
+        } else {
+            let mut bytes = vec![0u8; last_byte_count as usize];
+            let start_idx = if w >= last_byte_count {
+                w - last_byte_count
+            } else {
+                self.capacity + w - last_byte_count
+            };
+            for i in 0..last_byte_count {
+                let idx = (start_idx + i) % self.capacity;
+                bytes[i as usize] = self.data.get_index(idx);
+            }
+            bytes
+        };
+
+        // Interpret as UTF-8 if possible
+        let last_bytes_str = match String::from_utf8(last_bytes.clone()) {
+            Ok(s) => s,
+            Err(_) => format!("{:?}", last_bytes),
+        };
+
+        info!(
+            "SharedPipe[{}] dump: closed={} read_idx={} write_idx={} occupied={} last_bytes={}",
+            self.name, closed, r, w, occupied, last_bytes_str
+        );
+    }
+
     fn is_closed(&self) -> bool {
-        Atomics::load(&self.header, CLOSED_IDX).unwrap() == 1
+        let closed = Atomics::load(&self.header, CLOSED_IDX).unwrap();
+        closed == 1
     }
 
     fn read_idx(&self) -> u32 {
@@ -96,12 +142,69 @@ impl SharedPipe {
     }
 
     fn set_write(&self, value: u32) {
-        Atomics::store(&self.header, WRITE_IDX, value as i32).unwrap();
+        let old = Atomics::exchange(&self.header, WRITE_IDX, value as i32).unwrap();
+        if old == value as i32 {
+            panic!("set_write called with same value: {}", value);
+        }
         Atomics::notify(&self.header, WRITE_IDX).unwrap();
     }
 
-    pub fn buffer(&self) -> SharedArrayBuffer {
-        self.header.buffer().unchecked_into::<SharedArrayBuffer>()
+    fn get_occupied(&self, r: u32, w: u32) -> u32 {
+        if w >= r { w - r } else { self.capacity - r + w }
+    }
+
+    fn try_read(&self, r: u32, w: u32, buf: &mut [u8]) -> Option<usize> {
+        if r == w {
+            if self.is_closed() {
+                return Some(0); // EOF
+            }
+            return None;
+        }
+
+        let occupied = self.get_occupied(r, w);
+        let amount = (buf.len() as u32).min(occupied);
+
+        for i in 0..amount {
+            let idx = (r + i) % self.capacity;
+            buf[i as usize] = self.data.get_index(idx);
+        }
+
+        // info!(
+        //     "SharedPipe[{}] try_read: r={} first_bytes={:?}",
+        //     self.name,
+        //     r,
+        //     &buf[..(amount as usize).min(50)]
+        // );
+        Some(amount as usize)
+    }
+
+    fn try_write(&self, r: u32, w: u32, buf: &[u8]) -> Option<usize> {
+        if self.is_closed() {
+            return None;
+        }
+
+        let occupied = self.get_occupied(r, w);
+        //? The buffer is full if occupied == capacity - 1
+        let available = self.capacity.saturating_sub(occupied).saturating_sub(1);
+
+        if available == 0 {
+            return None;
+        }
+
+        let n = (buf.len() as u32).min(available);
+
+        for i in 0..n {
+            let idx = (w + i) % self.capacity;
+            self.data.set_index(idx, buf[i as usize]);
+        }
+
+        // info!(
+        //     "SharedPipe[{}] try_write: w={} first_bytes={:?}",
+        //     self.name,
+        //     w,
+        //     &buf[..buf.len().min(50)]
+        // );
+        Some(n as usize)
     }
 }
 
@@ -110,80 +213,64 @@ impl Read for SharedPipe {
         let r = self.read_idx();
         let w = self.write_idx();
 
-        if r == w {
-            //? Only check if closed when empty, so we can drain remaining data
-            // after close
-            if self.is_closed() {
-                return Ok(0);
-            }
-            return Err(std::io::ErrorKind::WouldBlock.into());
+        if let Some(n) = self.try_read(r, w, buf) {
+            self.set_read((r + n as u32) % self.capacity);
+            return Ok(n);
         }
 
-        let buf_len = buf.len() as u32;
-        let occupied = if w >= r { w - r } else { self.capacity - r + w };
-        let amount = occupied.min(buf_len);
-
-        // Chunk 1: From R to (End of Buffer or W)
-        let first_chunk_len = if w >= r {
-            amount
-        } else {
-            (self.capacity - r).min(amount)
-        };
-        self.data
-            .subarray(r, r + first_chunk_len)
-            .copy_to(&mut buf[..first_chunk_len as usize]);
-
-        // Chunk 2: From 0 to remaining (only if we wrapped)
-        if amount > first_chunk_len {
-            let second_chunk_len = amount - first_chunk_len;
-            self.data
-                .subarray(0, second_chunk_len)
-                .copy_to(&mut buf[first_chunk_len as usize..amount as usize]);
-        }
-
-        self.set_read((r + amount) % self.capacity);
-        Ok(amount as usize)
+        Err(std::io::ErrorKind::WouldBlock.into())
     }
 }
 
 impl Write for SharedPipe {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        if self.is_closed() {
-            return Err(std::io::ErrorKind::BrokenPipe.into());
-        }
-
         let r = self.read_idx();
         let w = self.write_idx();
 
-        let occupied = if w >= r { w - r } else { self.capacity - r + w };
-        let available = self.capacity - occupied - 1; // N-1 rule
-
-        if available == 0 {
-            return Err(std::io::ErrorKind::WouldBlock.into());
+        if let Some(n) = self.try_write(r, w, buf) {
+            self.set_write((w + n as u32) % self.capacity);
+            return Ok(n);
         }
 
-        let n = (buf.len() as u32).min(available);
-
-        // Chunk 1: From W to (End of Buffer or R-1)
-        let first_chunk_len = if r > w { n } else { (self.capacity - w).min(n) };
-        self.data.set(
-            &js_sys::Uint8Array::from(&buf[..first_chunk_len as usize]),
-            w,
-        );
-
-        // Chunk 2: From 0 to remaining (only if we wrap)
-        if n > first_chunk_len {
-            let second_chunk_len = n - first_chunk_len;
-            let src = &buf[first_chunk_len as usize..(first_chunk_len + second_chunk_len) as usize];
-            self.data.set(&js_sys::Uint8Array::from(src), 0);
-        }
-
-        self.set_write((w + n) % self.capacity);
-        Ok(n as usize)
+        Err(std::io::ErrorKind::WouldBlock.into())
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
+    }
+}
+
+impl WasiReader for SharedPipe {
+    fn is_ready(&self) -> bool {
+        let r = self.read_idx();
+        let w = self.write_idx();
+
+        r != w || self.is_closed()
+    }
+
+    fn wait_ready(&self, timeout: Option<web_time::Duration>) {
+        let timeout_ms = timeout
+            .map(|d| d.as_millis() as f64)
+            .unwrap_or(f64::INFINITY);
+
+        loop {
+            let (r, w) = (self.read_idx(), self.write_idx());
+
+            if r != w || self.is_closed() {
+                return;
+            }
+
+            match Atomics::wait_with_timeout(&self.header, WRITE_IDX, w as i32, timeout_ms) {
+                Ok(s) if s == "not-equal" => {
+                    //? WRITE_IDX changed, re-check
+                    continue;
+                }
+                _ => {
+                    //? Resolved
+                    return;
+                }
+            }
+        }
     }
 }
 
@@ -202,35 +289,39 @@ impl AsyncRead for SharedPipe {
         }
 
         //? Try sync read
-        match self.read(buf) {
-            Ok(n) => Poll::Ready(Ok(n)),
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                //? Setup async wait for WRITE_IDX to change
-                let current_w = self.write_idx() as i32;
-                let res: WaitAsyncResult = Atomics::wait_async(&self.header, WRITE_IDX, current_w)
-                    .expect("Atomics.waitAsync should be supported")
-                    .unchecked_into();
+        loop {
+            let (r, w) = (self.read_idx(), self.write_idx());
 
-                if !res.is_async() {
-                    // res was "not-equal", meaning another thread changed WRITE_IDX
-                    // already. So wake the caller.
-                    cx.waker().wake_by_ref();
-                    return Poll::Pending;
-                }
-
-                let promise: js_sys::Promise = res.value().unchecked_into();
-                let mut fut = JsFuture::from(promise);
-
-                if Pin::new(&mut fut).poll(cx).is_pending() {
-                    self.pending_read = Some(fut);
-                    return Poll::Pending;
-                }
-
-                // Future resolved, meaning WRITE_IDX changed, try read again
-                cx.waker().wake_by_ref();
-                return Poll::Pending;
+            if let Some(n) = self.try_read(r, w, buf) {
+                self.set_read((r + n as u32) % self.capacity);
+                return Poll::Ready(Ok(n));
             }
-            Err(e) => Poll::Ready(Err(e)),
+
+            //? Wait for WRITE_IDX to change
+            let res: WaitAsyncResult = Atomics::wait_async(&self.header, WRITE_IDX, w as i32)
+                .expect("waitAsync support")
+                .unchecked_into();
+
+            if !res.is_async() {
+                //? WRITE_IDX changed, re-check
+                continue;
+            }
+
+            let current_w = self.write_idx();
+            if current_w != w {
+                continue;
+            }
+
+            let promise: js_sys::Promise = res.value().unchecked_into();
+            let mut fut = JsFuture::from(promise);
+
+            if let Poll::Ready(_) = Pin::new(&mut fut).poll(cx) {
+                //? Resolved immediately, re-check
+                continue;
+            }
+
+            self.pending_read = Some(fut);
+            return Poll::Pending;
         }
     }
 }
@@ -241,6 +332,7 @@ impl AsyncWrite for SharedPipe {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
+        //? Drain existing promise
         if let Some(mut fut) = self.pending_write.take() {
             if Pin::new(&mut fut).poll(cx).is_pending() {
                 self.pending_write = Some(fut);
@@ -248,30 +340,34 @@ impl AsyncWrite for SharedPipe {
             }
         }
 
-        match self.write(buf) {
-            Ok(n) => Poll::Ready(Ok(n)),
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                // Writer waits for READ_IDX to change (meaning space freed up)
-                let current_r = self.read_idx() as i32;
-                let res: WaitAsyncResult = Atomics::wait_async(&self.header, READ_IDX, current_r)
-                    .expect("waitAsync support required")
-                    .unchecked_into();
+        loop {
+            let (r, w) = (self.read_idx(), self.write_idx());
 
-                if !res.is_async() {
-                    cx.waker().wake_by_ref();
-                    return Poll::Pending;
-                }
-
-                let mut fut = JsFuture::from(res.value().unchecked_into::<js_sys::Promise>());
-                if Pin::new(&mut fut).poll(cx).is_pending() {
-                    self.pending_write = Some(fut);
-                    return Poll::Pending;
-                }
-
-                cx.waker().wake_by_ref();
-                Poll::Pending
+            if let Some(n) = self.try_write(r, w, buf) {
+                self.set_write((w + n as u32) % self.capacity);
+                return Poll::Ready(Ok(n));
             }
-            Err(e) => Poll::Ready(Err(e)),
+
+            //? Wait for READ_IDX to change
+            let res: WaitAsyncResult = Atomics::wait_async(&self.header, READ_IDX, r as i32)
+                .expect("waitAsync support required")
+                .unchecked_into();
+
+            if !res.is_async() {
+                //? READ_IDX changed, re-check
+                continue;
+            }
+
+            let promise = res.value().unchecked_into::<js_sys::Promise>();
+            let mut fut = JsFuture::from(promise);
+
+            if let Poll::Ready(_) = Pin::new(&mut fut).poll(cx) {
+                //? Resolved immediately, re-check
+                continue;
+            }
+
+            self.pending_write = Some(fut);
+            return Poll::Pending;
         }
     }
 
@@ -296,7 +392,7 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn test_basic_read_write() {
-        let mut pipe = SharedPipe::new_with_capacity(10);
+        let mut pipe = SharedPipe::new_with_capacity("test", 10);
 
         let input = b"hello";
         let written = pipe.write(input).expect("Write failed");
@@ -321,7 +417,7 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn test_wrap_around_saturation() {
-        let mut pipe = SharedPipe::new_with_capacity(10);
+        let mut pipe = SharedPipe::new_with_capacity("test", 10);
 
         // 1. Fill 7 bytes
         pipe.write(b"hello_w").unwrap();
