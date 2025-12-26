@@ -126,6 +126,7 @@ fn run_instance(
 ) -> Result<(), WorkerError> {
     let stdin = SharedPipe::new("WORKER_STDIN", stdin);
     let stdout = SharedPipe::new("WORKER_STDOUT", stdout);
+    // TODO: Switch this back to SharedPipe for potentially increased performance?
     let stderr = message_writer::MessageWriter::new(name);
 
     let mut store = wasmer::Store::default();
