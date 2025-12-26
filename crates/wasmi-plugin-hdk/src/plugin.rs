@@ -1,25 +1,23 @@
-use std::{fmt::Display, io::BufReader, sync::Arc};
+use std::{fmt::Display, sync::Arc, time::Duration};
 
-use async_trait::async_trait;
-use futures::{AsyncBufReadExt, FutureExt};
+use futures::FutureExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 use tracing::info;
 use uuid::Uuid;
-use wasmi::{Engine, Module};
 use wasmi_plugin_pdk::{
     api::RequestHandler,
+    router::BoxFuture,
     rpc_message::{RpcError, RpcResponse},
-    server::BoxFuture,
-    transport::{JsonRpcTransport, Transport},
 };
 
-use crate::{
-    compile::compile_plugin,
-    host_handler::HostHandler,
-    plugin_instance::{SpawnError, spawn_plugin},
-};
+use crate::compile::Compiled;
+use crate::host_handler::HostHandler;
+use crate::runtime;
+use crate::runtime::Runtime;
+use crate::time::sleep;
+use crate::transport::{Transport, TransportError};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PluginId(Uuid);
@@ -56,42 +54,42 @@ impl Display for PluginId {
 type Logger = Box<dyn Fn(&str, &str) + Send + Sync>;
 
 /// Plugin is an async-capable instance of a plugin
-pub struct Plugin {
+pub struct Plugin<H: HostHandler> {
     name: String,
     id: PluginId,
-    handler: Arc<dyn HostHandler>,
-    engine: Engine,
-    module: Module,
+    handler: Arc<H>,
     logger: Logger,
+    compiled: Compiled,
+    timeout: Duration,
+    #[allow(dead_code)]
+    // TODO: Use fuel to terminate native plugins
     max_fuel: Option<u64>,
 }
 
 #[derive(Debug, Error)]
 pub enum PluginError {
-    #[error("spawn error")]
-    SpawnError(#[from] SpawnError),
-    #[error("transport error")]
-    RpcError(#[from] RpcError),
-    #[error("plugin died")]
-    PluginDied,
+    #[error("Transport error")]
+    TransportError(#[from] TransportError),
+    #[error("Bridge Error")]
+    BridgeError(#[from] Box<dyn std::error::Error>),
+    #[error("Plugin timeout")]
+    PluginTimeout,
 }
 
-impl Plugin {
+impl<H: HostHandler> Plugin<H> {
     pub fn new(
         name: &str,
         wasm_bytes: Vec<u8>,
-        handler: Arc<dyn HostHandler>,
-    ) -> Result<Self, wasmi::Error> {
-        let (engine, module) = compile_plugin(wasm_bytes.clone())?;
-
+        handler: Arc<H>,
+    ) -> Result<Self, wasmer::CompileError> {
         Ok(Plugin {
             name: name.to_string(),
             id: PluginId::new(),
             handler,
-            engine,
-            module,
-            max_fuel: None,
             logger: Box::new(default_plugin_logger),
+            max_fuel: None,
+            timeout: Duration::from_secs(10),
+            compiled: Compiled::new(name, &wasm_bytes)?,
         })
     }
 
@@ -110,18 +108,10 @@ impl Plugin {
         self
     }
 
-    /// Sets the maximum fuel for the plugin instance.
-    ///
-    /// The fuel limit controls how frequently the plugin is interrupted to
-    /// check for cancellation and yield to other tasks. Lower fuel limits
-    /// result in more frequent interruptions, which can improve responsiveness
-    /// for long-running compute-intensive tasks, but will also incur more overhead.
-    ///
-    /// Generally a fuel between 10_000 and 1_000_000 is a good starting point.
-    ///
-    /// Leave as None to use the default fuel limit, a sensible default of 100_000.
-    pub fn with_max_fuel(mut self, max_fuel: u64) -> Self {
-        self.max_fuel = Some(max_fuel);
+    /// Sets a timeout duration for plugin calls. If a call takes longer than
+    /// this duration, it will be terminated and an error will be returned.
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
         self
     }
 
@@ -134,61 +124,46 @@ impl Plugin {
     }
 }
 
-impl PluginError {
-    pub fn as_rpc_code(&self) -> RpcError {
-        match self {
-            PluginError::RpcError(code) => code.clone(),
-            _ => RpcError::Custom(self.to_string()),
-        }
-    }
-}
-
-impl From<PluginError> for RpcError {
-    fn from(err: PluginError) -> Self {
-        match err {
-            PluginError::RpcError(code) => code,
-            _ => RpcError::Custom(err.to_string()),
-        }
-    }
-}
-
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-impl Transport<PluginError> for Plugin {
-    async fn call(&self, method: &str, params: Value) -> Result<RpcResponse, PluginError> {
-        let (stdin_writer, stdout_reader, stderr_reader, is_running, instance_task) =
-            spawn_plugin(&self.engine, &self.module, self.max_fuel)?;
-
-        let name = self.name.clone();
-        let stderr_task = async move {
-            let mut buf_reader = futures::io::BufReader::new(stderr_reader);
-            let mut line = String::new();
-            while buf_reader.read_line(&mut line).await.is_ok_and(|n| n > 0) {
-                (self.logger)(&name, line.trim_end());
-                line.clear();
-            }
-        }
-        .fuse();
+impl<H: HostHandler + 'static> Plugin<H> {
+    pub async fn call(&self, method: &str, params: Value) -> Result<RpcResponse, PluginError> {
+        let runtime = self.create_runtime();
+        let (id, stdin_writer, stdout_reader) = runtime
+            .spawn(self.compiled.clone())
+            .await
+            .map_err(|e| PluginError::BridgeError(e.into()))?;
 
         let handler = PluginCallback {
             handler: self.handler.clone(),
             uuid: self.id,
         };
+        let transport = Transport::new(stdout_reader, stdin_writer);
 
-        let buf_reader = BufReader::new(stdout_reader);
-        let transport = JsonRpcTransport::with_handler(buf_reader, stdin_writer, handler);
-        let rpc_task = transport.call(method, params).fuse();
+        let transport_task = transport.call(method, params, Some(handler)).fuse();
+        let timeout = sleep(self.timeout).fuse();
+        futures::pin_mut!(transport_task, timeout);
 
-        let instance_task = instance_task.fuse();
-        futures::pin_mut!(rpc_task, instance_task, stderr_task);
+        futures::select! {
+            res = transport_task => {
+                runtime.terminate(id).await;
+                Ok(res?)
+            },
+            _ = timeout => {
+                runtime.terminate(id).await;
+                Err(PluginError::PluginTimeout)
+            }
+        }
+    }
 
-        //? Run the transport, plugin, and stderr logger until one of them completes
-        let (res, _, _) = futures::join!(rpc_task, instance_task, stderr_task);
-        let res = res?;
+    #[allow(clippy::type_complexity)]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn create_runtime(&self) -> impl Runtime + Send + Sync + 'static {
+        runtime::NativeRuntime::new()
+    }
 
-        is_running.store(false, std::sync::atomic::Ordering::SeqCst);
-
-        Ok(res)
+    #[allow(clippy::type_complexity)]
+    #[cfg(target_arch = "wasm32")]
+    fn create_runtime(&self) -> impl Runtime + Send + Sync + 'static {
+        runtime::WorkerRuntime::new()
     }
 }
 

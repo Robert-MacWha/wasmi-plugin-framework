@@ -1,5 +1,5 @@
 use serde_json::Value;
-use wasmi_plugin_pdk::{rpc_message::RpcError, server::BoxFuture};
+use wasmi_plugin_pdk::{router::BoxFuture, rpc_message::RpcError};
 
 use crate::plugin::PluginId;
 

@@ -23,6 +23,15 @@ pkgs.mkShell {
     cargo-machete
     samply
     rustfmt
+    binaryen
     rust-bin.stable.latest.rust-analyzer
+    wasm-pack
+    geckodriver
+    wasm-bindgen-cli_0_2_106
   ];
+
+  shellHook = ''
+    export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER=wasm-bindgen-test-runner
+    export WASM_BINDGEN_TEST_TIMEOUT=300
+  '';
 }

@@ -10,8 +10,9 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
 
-use futures::AsyncRead;
-use tracing::info;
+use futures::{AsyncRead, AsyncWrite};
+
+use crate::wasi::wasi_ctx::WasiReader;
 
 struct Inner {
     buf: VecDeque<u8>,
@@ -66,6 +67,18 @@ impl Read for NonBlockingPipeReader {
     }
 }
 
+impl WasiReader for NonBlockingPipeReader {
+    fn is_ready(&self) -> bool {
+        let inner = self.inner.lock().unwrap();
+        !inner.buf.is_empty() || inner.closed
+    }
+
+    fn wait_ready(&self, _timeout: Option<std::time::Duration>) {
+        // TODO: Make native-compatible version of this?
+        // No-op
+    }
+}
+
 impl AsyncRead for NonBlockingPipeReader {
     fn poll_read(
         self: Pin<&mut Self>,
@@ -116,12 +129,36 @@ impl Write for NonBlockingPipeWriter {
     }
 }
 
+impl AsyncWrite for NonBlockingPipeWriter {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.closed {
+            return Poll::Ready(Err(io::ErrorKind::BrokenPipe.into()));
+        }
+        inner.buf.extend(buf);
+        if let Some(waker) = inner.waker.take() {
+            waker.wake();
+        }
+        Poll::Ready(Ok(buf.len()))
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_close(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+}
+
 impl Drop for NonBlockingPipeWriter {
     fn drop(&mut self) {
         let mut inner = self.inner.lock().unwrap();
-        info!("Pipe writer dropped, closing pipe");
         inner.closed = true;
-        inner.waker = None;
         if let Some(waker) = inner.waker.take() {
             waker.wake();
         }
