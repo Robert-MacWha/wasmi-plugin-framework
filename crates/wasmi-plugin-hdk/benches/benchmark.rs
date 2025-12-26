@@ -30,12 +30,12 @@ mod benchmarks {
 
     fn setup_logs() {
         INIT.call_once(|| {
-            tracing_subscriber::fmt()
-                .compact()
-                .with_ansi(false)
-                .with_max_level(tracing_subscriber::filter::LevelFilter::TRACE)
-                .with_test_writer()
-                .init();
+            // tracing_subscriber::fmt()
+            //     .compact()
+            //     .with_ansi(false)
+            //     .with_max_level(tracing_subscriber::filter::LevelFilter::INFO)
+            //     .with_test_writer()
+            //     .init();
         });
     }
 
