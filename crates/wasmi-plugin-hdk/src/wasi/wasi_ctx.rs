@@ -682,19 +682,18 @@ pub fn poll_oneoff(
     let mut events_written = 0;
 
     // 1. Check if Stdin is ready (Data available or Pipe Closed)
-    if let Some(_sub) = stdin_sub {
-        if let Some(reader) = &ctx.stdin_reader {
-            if reader.get_ref().is_ready() {
-                write_event(
-                    &view,
-                    events_ptr,
-                    events_written,
-                    stdin_userdata,
-                    FD_READ_EVENT_TYPE,
-                );
-                events_written += 1;
-            }
-        }
+    if let Some(_sub) = stdin_sub
+        && let Some(reader) = &ctx.stdin_reader
+        && reader.get_ref().is_ready()
+    {
+        write_event(
+            &view,
+            events_ptr,
+            events_written,
+            stdin_userdata,
+            FD_READ_EVENT_TYPE,
+        );
+        events_written += 1;
     }
 
     // 2. Check if Clock has expired
