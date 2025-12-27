@@ -1,7 +1,7 @@
 use std::io::Write;
 
 use wasm_bindgen::JsCast;
-use web_sys::js_sys;
+use web_sys::{console::log_1, js_sys};
 
 use crate::runtime::worker_message::WorkerMessage;
 
@@ -22,10 +22,7 @@ impl MessageWriter {
 
 impl Write for MessageWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let msg = String::from_utf8_lossy(buf).to_string();
-        let msg = serde_wasm_bindgen::to_value(&WorkerMessage::PluginLog { message: msg }).unwrap();
-
-        self.global.post_message(&msg).unwrap();
+        log_1(js_sys::Uint8Array::from(buf).as_ref());
         Ok(buf.len())
     }
 

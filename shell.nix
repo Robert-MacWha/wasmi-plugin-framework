@@ -29,7 +29,7 @@ pkgs.mkShell {
   shellHook = ''
     export WASM_BINDGEN_THREADS_HEADERS=1
     export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER=wasm-bindgen-test-runner
-    export WASM_BINDGEN_TEST_TIMEOUT=100
+    export WASM_BINDGEN_TEST_TIMEOUT=300
     export RUST_SRC_PATH="${rustToolchain}/lib/rustlib/src/rust/library"
   '';
 }

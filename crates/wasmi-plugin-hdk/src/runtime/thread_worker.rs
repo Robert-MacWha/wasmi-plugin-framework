@@ -1,21 +1,24 @@
 use std::panic;
 
+use futures::future::LocalBoxFuture;
 use tracing::error;
-use wasm_bindgen::prelude::wasm_bindgen;
+use wasm_bindgen::{JsValue, prelude::wasm_bindgen};
 
 #[wasm_bindgen]
-pub async fn execute_worker_task(ptr: u32) {
-    set_panic_hook();
+pub async fn execute_worker_task(ptr: u32) -> web_sys::js_sys::Promise {
+    // set_panic_hook();
 
     //* SAFETY: We transfer ownership of the closure from the caller's `spawn`
     //* function to this web worker. The pointer must be a FnOnce closure
     //* allocated on the heap.
-    let closure = unsafe {
-        let raw = ptr as *mut Box<dyn FnOnce() + Send>;
-        Box::from_raw(raw)
-    };
+    let boxed: Box<Box<dyn FnOnce() -> LocalBoxFuture<'static, ()> + Send>> =
+        unsafe { Box::from_raw(ptr as *mut _) };
+    let fut = boxed();
 
-    (*closure)();
+    wasm_bindgen_futures::future_to_promise(async move {
+        fut.await;
+        Ok(JsValue::UNDEFINED)
+    })
 }
 
 fn set_panic_hook() {

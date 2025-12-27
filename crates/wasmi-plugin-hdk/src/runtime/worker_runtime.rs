@@ -7,7 +7,7 @@ use std::sync::Arc;
 use futures::lock::Mutex;
 use futures::{AsyncRead, AsyncWrite};
 use thiserror::Error;
-use tracing::error;
+use tracing::{error, info};
 use wasm_bindgen::JsCast;
 
 use crate::compile::Compiled;
@@ -61,7 +61,7 @@ impl Runtime for WorkerRuntime {
     > {
         let (stdin_reader, stdin_writer) = non_blocking_pipe();
         let (stdout_reader, stdout_writer) = non_blocking_pipe();
-        let stderr_writer = MessageWriter::new("".into());
+        let stderr_writer: MessageWriter = MessageWriter::new("".into());
         // let (stderr_reader, stderr_writer) = non_blocking_pipe();
 
         let pool = WorkerPool::global();
@@ -113,7 +113,9 @@ async fn run_instance(
         .set_stderr(stderr);
 
     let start = wasi_ctx.into_fn(&mut store, &module)?;
-    start.call(&mut store, &[])?;
+    info!("Starting Wasm instance");
+    let res = start.call(&mut store, &[])?;
+    info!("Wasm instance finished with result: {:?}", res);
 
     Ok(())
 }

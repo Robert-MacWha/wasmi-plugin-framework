@@ -74,7 +74,13 @@ async fn test_plugin() {
     setup_logs();
     info!("Starting test_plugin...");
 
-    let plugin = load_plugin().await;
+    let wasm_bytes = load_plugin_wasm();
+    let handler = Arc::new(get_host_server());
+
+    let plugin = Plugin::new("test_plugin", &wasm_bytes, handler)
+        .await
+        .unwrap()
+        .with_timeout(Duration::from_secs(2));
     let resp = plugin.call("ping", Value::Null).await.unwrap();
 
     assert_eq!(resp.result.as_str().unwrap(), "pong");

@@ -144,6 +144,8 @@ impl<H: HostHandler + 'static> Plugin<H> {
 
         futures::select! {
             res = transport_task => {
+                #[cfg(debug_assertions)]
+                sleep(Duration::from_millis(100)).await; // Give some time for cleanup
                 runtime.terminate(id).await;
                 Ok(res?)
             },

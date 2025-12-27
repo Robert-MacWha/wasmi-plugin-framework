@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex, OnceLock};
 
-use futures::channel::oneshot;
+use futures::{channel::oneshot, future::LocalBoxFuture};
 use thiserror::Error;
 use tracing::{error, info, warn};
 use wasm_bindgen::{
@@ -66,10 +66,10 @@ impl WorkerPool {
     {
         let handle = self.get_or_spawn_worker().await?;
 
-        let wrapper = move || {
-            wasm_bindgen_futures::spawn_local(async move {
+        let wrapper = move || -> LocalBoxFuture<'static, ()> {
+            Box::pin(async move {
                 f().await;
-            });
+            })
         };
         handle.run(wrapper)?;
         Ok(handle)
@@ -150,9 +150,14 @@ impl WorkerHandle {
         })
     }
 
-    fn run(&self, f: impl FnOnce() + Send + 'static) -> Result<(), SpawnError> {
+    fn run<F, Fut>(&self, f: F) -> Result<(), SpawnError>
+    where
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: Future<Output = ()> + 'static,
+    {
         // 1. Box the function and get a raw pointer
-        let box_f: Box<Box<dyn FnOnce() + Send>> = Box::new(Box::new(f));
+        let box_f: Box<Box<dyn FnOnce() -> LocalBoxFuture<'static, ()> + Send>> =
+            Box::new(Box::new(move || Box::pin(f())));
         let ptr = Box::into_raw(box_f) as u32;
 
         // 2. Load my worker
@@ -168,6 +173,7 @@ impl WorkerHandle {
     }
 
     pub fn terminate(&self) {
+        info!("Terminating worker {}", self.id);
         self.worker.terminate();
         let mut state = self.state.lock().unwrap();
         *state = WorkerState::Terminated;

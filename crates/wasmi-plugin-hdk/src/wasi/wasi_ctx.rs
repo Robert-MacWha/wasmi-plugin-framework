@@ -104,6 +104,21 @@ impl WasiCtx {
         mut store: &mut wasmer::Store,
         module: &wasmer::Module,
     ) -> Result<wasmer::Function, WasiError> {
+        let (ctx, imports) = self.get_imports(&mut store);
+
+        let instance = wasmer::Instance::new(&mut store, module, &imports)?;
+        let memory = instance.exports.get_memory("memory")?;
+        ctx.as_mut(&mut store).set_memory(memory.clone());
+
+        let start_fn = instance.exports.get_function("_start")?;
+
+        Ok(start_fn.clone())
+    }
+
+    pub fn get_imports(
+        self,
+        mut store: &mut wasmer::Store,
+    ) -> (wasmer::FunctionEnv<WasiCtx>, wasmer::Imports) {
         let ctx = wasmer::FunctionEnv::new(&mut store, self);
         let imports = wasmer::imports! {
             "wasi_snapshot_preview1" => {
@@ -124,16 +139,10 @@ impl WasiCtx {
             }
         };
 
-        let instance = wasmer::Instance::new(&mut store, module, &imports)?;
-        let memory = instance.exports.get_memory("memory")?;
-        ctx.as_mut(&mut store).set_memory(memory.clone());
-
-        let start_fn = instance.exports.get_function("_start")?;
-
-        Ok(start_fn.clone())
+        (ctx, imports)
     }
 
-    fn set_memory(&mut self, memory: wasmer::Memory) {
+    pub fn set_memory(&mut self, memory: wasmer::Memory) {
         self.memory = Some(memory);
     }
 }

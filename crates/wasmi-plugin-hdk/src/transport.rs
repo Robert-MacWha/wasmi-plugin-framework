@@ -1,7 +1,7 @@
 use futures::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, io::BufReader};
 use serde_json::Value;
 use thiserror::Error;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use wasmi_plugin_pdk::{
     api::RequestHandler,
     rpc_message::{RpcError, RpcErrorResponse, RpcMessage, RpcResponse},
@@ -52,7 +52,10 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Transport<R, W> {
         loop {
             info!("Waiting for response...");
             match self.reader.read_line(&mut line).await {
-                Ok(0) => return Err(TransportError::Eof),
+                Ok(0) => {
+                    warn!("EOF reached while reading from transport");
+                    return Err(TransportError::Eof);
+                }
                 Ok(_) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     yield_now().await;

@@ -125,6 +125,7 @@ fn main() {
         .without_time()
         .init();
     info!("Starting plugin...");
+    info!("Test");
 
     PluginServer::new()
         .with_method("ping", ping)
