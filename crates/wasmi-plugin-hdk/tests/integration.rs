@@ -33,14 +33,11 @@ async fn load_plugin() -> Plugin<HostServer<()>> {
 
 fn get_host_server() -> HostServer<()> {
     HostServer::default()
-        .with_method("ping", |_, _params: ()| async move {
-            info!("Received ping request, sending pong response");
-            Ok("pong".to_string())
-        })
-        .with_method("echo", |_, params: Value| async move {
-            info!("Received echo request, returning response");
-            Ok(params)
-        })
+        .with_method(
+            "ping",
+            |_, _params: ()| async move { Ok("pong".to_string()) },
+        )
+        .with_method("echo", |_, params: Value| async move { Ok(params) })
 }
 
 fn setup_logs() {
