@@ -96,7 +96,6 @@ async fn run_instance(
 ) -> Result<(), RunError> {
     let mut store = wasmer::Store::default();
 
-    // let js_module = compiled.js_module;
     let wasm_bytes = compiled.wasm_bytes.as_ref();
 
     let js_bytes = web_sys::js_sys::Uint8Array::from(wasm_bytes);
@@ -113,9 +112,7 @@ async fn run_instance(
         .set_stderr(stderr);
 
     let start = wasi_ctx.into_fn(&mut store, &module)?;
-    info!("Starting Wasm instance");
-    let res = start.call(&mut store, &[])?;
-    info!("Wasm instance finished with result: {:?}", res);
+    start.call(&mut store, &[])?;
 
     Ok(())
 }

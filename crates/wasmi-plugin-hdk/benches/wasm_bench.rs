@@ -32,11 +32,12 @@ fn get_host_server() -> HostServer<(Option<PluginId>, ())> {
 
 fn setup_logs() {
     INIT.call_once(|| {
-        // tracing_wasm::set_as_global_default_with_config(
-        //     tracing_wasm::WASMLayerConfigBuilder::new()
-        //         .set_console_config(tracing_wasm::ConsoleConfig::ReportWithoutConsoleColor)
-        //         .build(),
-        // );
+        tracing_wasm::set_as_global_default_with_config(
+            tracing_wasm::WASMLayerConfigBuilder::new()
+                .set_console_config(tracing_wasm::ConsoleConfig::ReportWithoutConsoleColor)
+                .set_max_level(tracing::Level::INFO)
+                .build(),
+        );
     });
 }
 
@@ -48,7 +49,8 @@ async fn bench_ping_wasm(c: &mut Criterion) {
     let plugin = Arc::new(
         Plugin::new("test_plugin", &wasm_bytes, handler)
             .await
-            .unwrap(),
+            .unwrap()
+            .with_timeout(Duration::from_secs(1)),
     );
 
     c.bench_async_function("ping", |b| {
@@ -57,6 +59,7 @@ async fn bench_ping_wasm(c: &mut Criterion) {
             let plugin = plugin.clone();
             async move {
                 plugin.call("ping", serde_json::Value::Null).await.unwrap();
+                info!("ping call completed");
             }
         }))
     })

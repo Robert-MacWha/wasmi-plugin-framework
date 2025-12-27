@@ -50,7 +50,6 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Transport<R, W> {
         let mut line = String::new();
 
         loop {
-            info!("Waiting for response...");
             match self.reader.read_line(&mut line).await {
                 Ok(0) => {
                     warn!("EOF reached while reading from transport");

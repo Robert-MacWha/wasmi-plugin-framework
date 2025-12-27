@@ -379,9 +379,20 @@ pub fn fd_write(
                 return Errno::Fault as i32;
             }
 
+            // Print the data to be copied as a string
+            info!(
+                "fd_write: writing {} bytes to fd {}: {:?}",
+                to_copy,
+                fd,
+                String::from_utf8_lossy(&scratch[..to_copy])
+            );
             match writer.write(&scratch[..to_copy]) {
-                Ok(0) => break, // Writer closed
+                Ok(0) => {
+                    info!("fd_write: writer returned 0 bytes written, stopping");
+                    break;
+                }
                 Ok(n) => {
+                    info!("fd_write: wrote {} bytes to fd {}", n, fd);
                     written += n;
                     total_written += n as u32;
                     if n < to_copy {
@@ -389,19 +400,25 @@ pub fn fd_write(
                     }
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    info!("fd_write: writer would block");
                     // Spin until writable
                     continue;
                 }
-                Err(_) => return Errno::Io as i32,
+                Err(_) => {
+                    info!("fd_write: writer error");
+                    return Errno::Io as i32;
+                }
             }
         }
 
         //? If we couldn't write the full iovec, stop processing further iovecs
         if written < buf_len {
+            info!("fd_write: short write, stopping further iovecs");
             break;
         }
     }
 
+    info!("fd_write: total_written={}", total_written);
     // Write total_written into nwrite_ptr
     if view
         .write(nwrite_ptr as u64, &total_written.to_le_bytes())

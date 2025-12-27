@@ -1,13 +1,9 @@
 use std::io::Write;
 
-use wasm_bindgen::JsCast;
 use web_sys::{console::log_1, js_sys};
-
-use crate::runtime::worker_message::WorkerMessage;
 
 pub struct MessageWriter {
     name: String,
-    global: web_sys::DedicatedWorkerGlobalScope,
 }
 
 unsafe impl Send for MessageWriter {}
@@ -15,14 +11,17 @@ unsafe impl Sync for MessageWriter {}
 
 impl MessageWriter {
     pub fn new(name: String) -> Self {
-        let global = js_sys::global().unchecked_into::<web_sys::DedicatedWorkerGlobalScope>();
-        Self { name, global }
+        Self { name }
     }
 }
 
 impl Write for MessageWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        log_1(js_sys::Uint8Array::from(buf).as_ref());
+        let mut prefix = format!("[{}] ", self.name).into_bytes();
+        prefix.extend_from_slice(buf);
+        let prefix = prefix.as_slice();
+
+        log_1(js_sys::Uint8Array::from(prefix).as_ref());
         Ok(buf.len())
     }
 
