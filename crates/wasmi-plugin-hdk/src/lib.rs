@@ -6,3 +6,4 @@ pub mod server;
 mod time;
 pub mod transport;
 mod wasi;
+pub mod worker_pool;

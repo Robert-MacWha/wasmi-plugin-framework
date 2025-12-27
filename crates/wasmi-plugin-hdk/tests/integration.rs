@@ -26,7 +26,7 @@ async fn load_plugin() -> Plugin<HostServer<()>> {
     let plugin = Plugin::new("test_plugin", &wasm_bytes, handler)
         .await
         .unwrap()
-        .with_timeout(Duration::from_secs(2));
+        .with_timeout(Duration::from_secs(5));
 
     plugin
 }

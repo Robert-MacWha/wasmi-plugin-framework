@@ -12,7 +12,7 @@ use web_sys::{
     js_sys::{self, Array, Reflect, Uint8Array},
 };
 
-use crate::runtime::worker_message::WorkerMessage;
+use crate::worker_pool::worker_message::WorkerMessage;
 
 pub type WorkerId = u64;
 

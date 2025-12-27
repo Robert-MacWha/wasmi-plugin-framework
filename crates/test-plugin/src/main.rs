@@ -43,7 +43,6 @@ async fn call_many(transport: Transport, limit: u64) -> Result<(), RpcError> {
         let transport_clone = transport.clone();
         let task = async move {
             let resp = transport_clone.call("ping", Value::Null)?;
-            info!("Call {} got response: {:?}", i, resp.result);
             Ok::<(), RpcError>(())
         };
         tasks.push(task);
@@ -70,7 +69,6 @@ async fn call_many_async(transport: Transport, limit: u64) -> Result<(), RpcErro
         let transport_clone = transport.clone();
         let task = async move {
             let resp = transport_clone.call_async("ping", Value::Null).await?;
-            info!("Call {} got response: {:?}", i, resp.result);
             Ok::<(), RpcError>(())
         };
         tasks.push(task);

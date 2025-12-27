@@ -4,19 +4,20 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::sync::Arc;
 
+use futures::io::BufReader;
 use futures::lock::Mutex;
-use futures::{AsyncRead, AsyncWrite};
+use futures::{AsyncBufReadExt, AsyncRead, AsyncWrite};
 use thiserror::Error;
 use tracing::{error, info};
 use wasm_bindgen::JsCast;
+use wasm_bindgen_futures::spawn_local;
 use web_sys::js_sys::WebAssembly;
 
 use crate::compile::Compiled;
 use crate::runtime::Runtime;
-use crate::runtime::message_writer::MessageWriter;
 use crate::runtime::non_blocking_pipe::non_blocking_pipe;
-use crate::runtime::worker_pool::{SpawnError, WorkerHandle, WorkerId, WorkerPool};
 use crate::wasi::wasi_ctx::{self, WasiReader};
+use crate::worker_pool::worker_pool::{SpawnError, WorkerHandle, WorkerId, WorkerPool};
 
 pub struct WorkerRuntime {
     active_sessions: Arc<Mutex<HashMap<WorkerId, Arc<WorkerHandle>>>>,
@@ -62,8 +63,10 @@ impl Runtime for WorkerRuntime {
     > {
         let (stdin_reader, stdin_writer) = non_blocking_pipe();
         let (stdout_reader, stdout_writer) = non_blocking_pipe();
-        let stderr_writer: MessageWriter = MessageWriter::new("".into());
-        // let (stderr_reader, stderr_writer) = non_blocking_pipe();
+        let (stderr_reader, stderr_writer) = non_blocking_pipe();
+        // let stderr_writer: MessageWriter = MessageWriter::new("".into());
+
+        handle_stderr(&compiled.name, stderr_reader);
 
         let module = compiled.js_module;
         let pool = WorkerPool::global();
@@ -125,4 +128,26 @@ async fn run_instance(
     start.call(&mut store, &[])?;
 
     Ok(())
+}
+
+fn handle_stderr(name: &str, stderr: impl AsyncRead + Unpin + Send + Sync + 'static) {
+    let name = name.to_string();
+    spawn_local(async move {
+        let mut reader = BufReader::new(stderr);
+        let mut line = String::new();
+        let name = name;
+        loop {
+            match reader.read_line(&mut line).await {
+                Ok(0) => break, // EOF
+                Ok(_) => {
+                    info!("[{}] {}", name, line.trim_end());
+                    line.clear();
+                }
+                Err(e) => {
+                    error!("Error reading Wasm stderr: {}", e);
+                    break;
+                }
+            }
+        }
+    });
 }
