@@ -77,9 +77,9 @@ pub enum PluginError {
 }
 
 impl<H: HostHandler> Plugin<H> {
-    pub fn new(
+    pub async fn new(
         name: &str,
-        wasm_bytes: Vec<u8>,
+        wasm_bytes: &[u8],
         handler: Arc<H>,
     ) -> Result<Self, wasmer::CompileError> {
         Ok(Plugin {
@@ -89,7 +89,7 @@ impl<H: HostHandler> Plugin<H> {
             logger: Box::new(default_plugin_logger),
             max_fuel: None,
             timeout: Duration::from_secs(10),
-            compiled: Compiled::new(name, &wasm_bytes)?,
+            compiled: Compiled::new(name, wasm_bytes).await?,
         })
     }
 

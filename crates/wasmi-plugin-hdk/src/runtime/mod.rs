@@ -1,24 +1,25 @@
-#[cfg(not(target_arch = "wasm32"))]
-mod native_runtime;
-use futures::{AsyncRead, AsyncWrite};
+pub mod non_blocking_pipe;
+
 #[cfg(not(target_arch = "wasm32"))]
 pub use native_runtime::NativeRuntime;
 #[cfg(not(target_arch = "wasm32"))]
-mod non_blocking_pipe;
+mod native_runtime;
 
-#[cfg(target_arch = "wasm32")]
-mod worker_runtime;
 #[cfg(target_arch = "wasm32")]
 pub use worker_runtime::WorkerRuntime;
-
 #[cfg(target_arch = "wasm32")]
 pub mod shared_pipe;
 #[cfg(target_arch = "wasm32")]
-mod worker_pool;
+pub mod thread_worker;
 #[cfg(target_arch = "wasm32")]
-pub mod worker_protocol;
+pub mod worker_message;
+#[cfg(target_arch = "wasm32")]
+pub mod worker_pool;
+#[cfg(target_arch = "wasm32")]
+pub mod worker_runtime;
 
 use crate::compile::Compiled;
+use futures::{AsyncRead, AsyncWrite};
 
 pub trait Runtime {
     type Error: Into<Box<dyn std::error::Error>>;

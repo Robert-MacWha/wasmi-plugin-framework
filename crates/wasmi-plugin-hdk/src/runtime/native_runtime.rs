@@ -72,8 +72,8 @@ impl Runtime for NativeRuntime {
         let (stdout_reader, stdout_writer) = non_blocking_pipe();
         let (stderr_reader, stderr_writer) = non_blocking_pipe();
 
-        let wasm_handle = Self::wasm_handle(compiled, stdin_reader, stdout_writer, stderr_writer);
-        Self::spawn_stderr(name, stderr_reader);
+        let wasm_handle = wasm_handle(compiled, stdin_reader, stdout_writer, stderr_writer);
+        spawn_stderr(name, stderr_reader);
 
         let session = NativeSession { wasm_handle };
 
@@ -89,66 +89,64 @@ impl Runtime for NativeRuntime {
     }
 }
 
-impl NativeRuntime {
-    fn wasm_handle(
-        compiled: Compiled,
-        stdin_reader: NonBlockingPipeReader,
-        stdout_writer: NonBlockingPipeWriter,
-        stderr_writer: NonBlockingPipeWriter,
-    ) -> JoinHandle<()> {
-        spawn_blocking(move || {
-            let result = Self::run_instance(compiled, stdin_reader, stdout_writer, stderr_writer);
-            if let Err(e) = result {
-                eprintln!("Plugin execution error: {:?}", e);
-            }
-        })
-    }
+fn wasm_handle(
+    compiled: Compiled,
+    stdin_reader: NonBlockingPipeReader,
+    stdout_writer: NonBlockingPipeWriter,
+    stderr_writer: NonBlockingPipeWriter,
+) -> JoinHandle<()> {
+    spawn_blocking(move || {
+        let result = run_instance(compiled, stdin_reader, stdout_writer, stderr_writer);
+        if let Err(e) = result {
+            eprintln!("Plugin execution error: {:?}", e);
+        }
+    })
+}
 
-    fn spawn_stderr(name: String, mut stderr_reader: NonBlockingPipeReader) {
-        spawn(async move {
-            let mut stderr = BufReader::new(&mut stderr_reader);
-            let mut buffer = String::new();
-            loop {
-                buffer.clear();
-                match stderr.read_line(&mut buffer).await {
-                    Ok(0) => {
-                        break;
-                    }
-                    Ok(_) => {
-                        info!("[plugin] [{}] {}", name, buffer.trim_end());
-                    }
-                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        tokio::task::yield_now().await;
-                        continue;
-                    }
-                    Err(e) => {
-                        error!("[WorkerBridge] Error reading from stderr: {}", e);
-                        break;
-                    }
+fn spawn_stderr(name: String, mut stderr_reader: NonBlockingPipeReader) {
+    spawn(async move {
+        let mut stderr = BufReader::new(&mut stderr_reader);
+        let mut buffer = String::new();
+        loop {
+            buffer.clear();
+            match stderr.read_line(&mut buffer).await {
+                Ok(0) => {
+                    break;
+                }
+                Ok(_) => {
+                    info!("[plugin] [{}] {}", name, buffer.trim_end());
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    tokio::task::yield_now().await;
+                    continue;
+                }
+                Err(e) => {
+                    error!("[WorkerBridge] Error reading from stderr: {}", e);
+                    break;
                 }
             }
-        });
-    }
+        }
+    });
+}
 
-    fn run_instance(
-        compiled: Compiled,
-        stdin: NonBlockingPipeReader,
-        stdout: NonBlockingPipeWriter,
-        stderr: NonBlockingPipeWriter,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let engine = compiled.engine;
-        let module = compiled.module;
+fn run_instance(
+    compiled: Compiled,
+    stdin: NonBlockingPipeReader,
+    stdout: NonBlockingPipeWriter,
+    stderr: NonBlockingPipeWriter,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let engine = compiled.engine;
+    let module = compiled.module;
 
-        let mut store = Store::new(engine);
+    let mut store = Store::new(engine);
 
-        let wasi_ctx = WasiCtx::new()
-            .set_stdin(stdin)
-            .set_stdout(stdout)
-            .set_stderr(stderr);
+    let wasi_ctx = WasiCtx::new()
+        .set_stdin(stdin)
+        .set_stdout(stdout)
+        .set_stderr(stderr);
 
-        let start = wasi_ctx.into_fn(&mut store, &module)?;
-        start.call(&mut store, &[])?;
+    let start = wasi_ctx.into_fn(&mut store, &module)?;
+    start.call(&mut store, &[])?;
 
-        Ok(())
-    }
+    Ok(())
 }

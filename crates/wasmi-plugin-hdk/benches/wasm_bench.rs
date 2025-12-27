@@ -45,7 +45,11 @@ async fn bench_ping_wasm(c: &mut Criterion) {
     setup_logs();
     let wasm_bytes = load_plugin_wasm();
     let handler = Arc::new(get_host_server());
-    let plugin = Arc::new(Plugin::new("test_plugin", wasm_bytes, handler).unwrap());
+    let plugin = Arc::new(
+        Plugin::new("test_plugin", &wasm_bytes, handler)
+            .await
+            .unwrap(),
+    );
 
     c.bench_async_function("ping", |b| {
         let plugin = plugin.clone();
@@ -74,8 +78,9 @@ async fn bench_lifecycle(c: &mut Criterion) {
             let wasm_bytes = wasm_bytes.clone();
             let handler = handler.clone();
             async move {
-                let plugin =
-                    Plugin::new("test_plugin", wasm_bytes.as_ref().clone(), handler).unwrap();
+                let plugin = Plugin::new("test_plugin", &wasm_bytes, handler)
+                    .await
+                    .unwrap();
                 plugin.call("ping", serde_json::Value::Null).await.unwrap();
             }
         }))
@@ -90,7 +95,11 @@ async fn bench_prime_sieve_small(c: &mut Criterion) {
     setup_logs();
     let wasm_bytes = load_plugin_wasm();
     let handler = Arc::new(get_host_server());
-    let plugin = Arc::new(Plugin::new("test_plugin", wasm_bytes, handler).unwrap());
+    let plugin = Arc::new(
+        Plugin::new("test_plugin", &wasm_bytes, handler)
+            .await
+            .unwrap(),
+    );
 
     c.bench_async_function("prime_sieve_small", |b| {
         let plugin = plugin.clone();
@@ -113,7 +122,11 @@ async fn bench_prime_sieve_large(c: &mut Criterion) {
     setup_logs();
     let wasm_bytes = load_plugin_wasm();
     let handler = Arc::new(get_host_server());
-    let plugin = Arc::new(Plugin::new("test_plugin", wasm_bytes, handler).unwrap());
+    let plugin = Arc::new(
+        Plugin::new("test_plugin", &wasm_bytes, handler)
+            .await
+            .unwrap(),
+    );
 
     c.bench_async_function("prime_sieve_large", |b| {
         let plugin = plugin.clone();
@@ -138,7 +151,8 @@ async fn bench_call_many(c: &mut Criterion) {
     let wasm_bytes = load_plugin_wasm();
     let handler = Arc::new(get_host_server());
     let plugin = Arc::new(
-        Plugin::new("test_plugin", wasm_bytes, handler)
+        Plugin::new("test_plugin", &wasm_bytes, handler)
+            .await
             .unwrap()
             .with_timeout(Duration::from_secs(5)),
     );
@@ -166,7 +180,8 @@ async fn bench_call_many_async(c: &mut Criterion) {
     let wasm_bytes = load_plugin_wasm();
     let handler = Arc::new(get_host_server());
     let plugin = Arc::new(
-        Plugin::new("test_plugin", wasm_bytes, handler)
+        Plugin::new("test_plugin", &wasm_bytes, handler)
+            .await
             .unwrap()
             .with_timeout(Duration::from_secs(5)),
     );

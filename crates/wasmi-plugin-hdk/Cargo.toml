@@ -25,7 +25,6 @@ uuid = { workspace = true }
 wasmi-plugin-pdk = { workspace = true }
 wasmi-plugin-rt = { workspace = true }
 web-time = { workspace = true }
-wasmer-types = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { workspace = true }
@@ -33,13 +32,11 @@ wasmer = { workspace = true, default-features = true}
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 gloo-timers = { workspace = true }
-tracing-wasm = { workspace = true }
 serde-wasm-bindgen = { workspace = true }
 wasmer = { workspace = true, features = ["js-default", "js-serializable-module"] }
-web-sys = { workspace = true, features=["Worker", "MessageEvent", "Blob", "BlobPropertyBag", "Url", "console", "TextDecoder"] }
+web-sys = { workspace = true, features=["Worker", "WorkerOptions", "WorkerType", "MessageEvent", "Blob", "BlobPropertyBag", "Url", "console", "TextDecoder"] }
 wasm-bindgen = { workspace = true }
 wasm-bindgen-futures = { workspace = true }
-wasmer-types = { workspace = true, features=["enable-serde"] }
 
 [dev-dependencies]
 tracing-subscriber = { workspace = true }
@@ -49,6 +46,7 @@ tracing-test = { version = "0.2.5", features = ["no-env-filter"] }
 criterion = "0.8.0"
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+tracing-wasm = { workspace = true }
 wasm-bindgen-test = "0.3"
 web-sys = { version = "0.3", features = ["Performance", "Window"] }
 

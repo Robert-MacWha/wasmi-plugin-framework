@@ -1,4 +1,4 @@
-mod compile;
+pub mod compile;
 pub mod host_handler;
 pub mod plugin;
 pub mod runtime;
