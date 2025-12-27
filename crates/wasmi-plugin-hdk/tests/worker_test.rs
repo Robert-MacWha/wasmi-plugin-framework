@@ -37,7 +37,7 @@ async fn test_worker() {
 
     info!("Spawning worker...");
     let pool = WorkerPool::global();
-    pool.run(task).await.expect("Failed to spawn worker");
+    pool.run(task).expect("Failed to spawn worker");
 
     info!("Waiting for worker response...");
     let result = rx
@@ -81,7 +81,7 @@ async fn test_worker_with_pipes() {
 
     info!("Spawning worker...");
     let pool = WorkerPool::global();
-    pool.run(task).await.expect("Failed to spawn worker");
+    pool.run(task).expect("Failed to spawn worker");
 
     // Sleep for a sec to ensure the worker is ready
     sleep(Duration::from_millis(10)).await;

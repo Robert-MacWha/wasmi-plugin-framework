@@ -30,15 +30,6 @@ pub struct WasiCtx {
     stdout_writer: Option<Box<dyn Write + Send + Sync>>,
     stderr_writer: Option<Box<dyn Write + Send + Sync>>,
 
-    // Time when the host should resume the guest from an out-of-fuel yield.
-    // If None, the guest should be started immediately. If Some, the guest
-    // should be resumed after this time is reached.
-    pub sleep_until: Option<Instant>,
-
-    /// Whether the Wasi instance is current paused waiting for stdin. If true,
-    /// the host may choose to wait for stdin to be ready before resuming execution.
-    pub awaiting_stdin: bool,
-
     memory: Option<wasmer::Memory>,
 }
 
@@ -64,8 +55,6 @@ impl WasiCtx {
             stdin_reader: None,
             stdout_writer: None,
             stderr_writer: None,
-            sleep_until: None,
-            awaiting_stdin: false,
             memory: None,
         }
     }

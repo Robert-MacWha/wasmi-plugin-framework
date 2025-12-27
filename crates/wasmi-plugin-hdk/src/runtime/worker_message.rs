@@ -8,6 +8,5 @@ pub enum WorkerMessage {
         level: String,
         ts: f64,
     },
-    Ready,
     Idle,
 }

@@ -67,21 +67,19 @@ impl Runtime for WorkerRuntime {
 
         let module = compiled.js_module;
         let pool = WorkerPool::global();
-        let handle = pool
-            .run_with(&module, move |extra| async move {
-                let res = run_instance(
-                    extra,
-                    &compiled.wasm_bytes,
-                    stdin_reader,
-                    stdout_writer,
-                    stderr_writer,
-                )
-                .await;
-                if let Err(e) = res {
-                    error!("Error running Wasm instance: {}", e);
-                }
-            })
-            .await?;
+        let handle = pool.run_with(&module, move |extra| async move {
+            let res = run_instance(
+                extra,
+                &compiled.wasm_bytes,
+                stdin_reader,
+                stdout_writer,
+                stderr_writer,
+            )
+            .await;
+            if let Err(e) = res {
+                error!("Error running Wasm instance: {}", e);
+            }
+        })?;
 
         let id = handle.id;
         self.active_sessions.lock().await.insert(handle.id, handle);

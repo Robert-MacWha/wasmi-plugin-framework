@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex, OnceLock};
 
-use futures::{channel::oneshot, future::LocalBoxFuture};
+use futures::future::LocalBoxFuture;
 use thiserror::Error;
 use tracing::{error, info, warn};
 use wasm_bindgen::{
@@ -59,12 +59,13 @@ impl WorkerPool {
         })
     }
 
-    pub async fn run<F, Fut>(&self, f: F) -> Result<Arc<WorkerHandle>, SpawnError>
+    #[allow(dead_code)]
+    pub fn run<F, Fut>(&self, f: F) -> Result<Arc<WorkerHandle>, SpawnError>
     where
         F: FnOnce() -> Fut + Send + 'static,
         Fut: Future<Output = ()> + 'static,
     {
-        let handle = self.get_or_spawn_worker().await?;
+        let handle = self.get_or_spawn_worker()?;
 
         let wrapper = move || -> LocalBoxFuture<'static, ()> {
             Box::pin(async move {
@@ -75,7 +76,7 @@ impl WorkerPool {
         Ok(handle)
     }
 
-    pub async fn run_with<F, Fut>(
+    pub fn run_with<F, Fut>(
         &self,
         extra: &wasm_bindgen::JsValue,
         f: F,
@@ -84,7 +85,7 @@ impl WorkerPool {
         F: FnOnce(wasm_bindgen::JsValue) -> Fut + Send + 'static,
         Fut: Future<Output = ()> + 'static,
     {
-        let handle = self.get_or_spawn_worker().await?;
+        let handle = self.get_or_spawn_worker()?;
 
         let wrapper = move |v: wasm_bindgen::JsValue| -> LocalBoxFuture<'static, ()> {
             let v = v.clone();
@@ -96,15 +97,7 @@ impl WorkerPool {
         Ok(handle)
     }
 
-    pub fn terminate(&self, worker_id: WorkerId) {
-        let mut state = self.state.lock().unwrap();
-        if let Some(pos) = state.workers.iter().position(|w| w.id == worker_id) {
-            let handle = state.workers.remove(pos);
-            handle.terminate();
-        }
-    }
-
-    async fn get_or_spawn_worker(&self) -> Result<Arc<WorkerHandle>, SpawnError> {
+    fn get_or_spawn_worker(&self) -> Result<Arc<WorkerHandle>, SpawnError> {
         // Remove any that are terminated
         self.state.lock().unwrap().workers.retain(|w| {
             let worker_state = w.state.lock().unwrap();
@@ -122,7 +115,7 @@ impl WorkerPool {
 
         // Otherwise, spawn a new one
         let id = self.state.lock().unwrap().workers.len() as u64;
-        let handle = WorkerHandle::spawn(id).await?;
+        let handle = WorkerHandle::spawn(id)?;
         let handle = Arc::new(handle);
         self.state.lock().unwrap().workers.push(handle.clone());
         Ok(handle)
@@ -130,19 +123,19 @@ impl WorkerPool {
 }
 
 impl WorkerHandle {
-    pub async fn spawn(id: u64) -> Result<WorkerHandle, SpawnError> {
+    pub fn spawn(id: u64) -> Result<WorkerHandle, SpawnError> {
         let name = format!("worker-{}", id);
 
         // 2. Create the worker
         let options = WorkerOptions::new();
         options.set_name(&name);
         options.set_type(WorkerType::Module);
-        let worker = Worker::new_with_options(&worker_url(), &options).unwrap();
+        let worker =
+            Worker::new_with_options(&worker_url(), &options).map_err(SpawnError::JsError)?;
 
         // 3. Set up onmessage handler
-        let (init_tx, init_rx) = oneshot::channel();
         let state = Arc::new(Mutex::new(WorkerState::Busy));
-        let on_message = on_message_handler(init_tx, state.clone(), name.clone());
+        let on_message = on_message_handler(state.clone(), name.clone());
         let on_message = Closure::wrap(on_message);
         worker.set_onmessage(Some(on_message.as_ref().unchecked_ref()));
 
@@ -159,9 +152,6 @@ impl WorkerHandle {
         Reflect::set(&msg, &"sdkUrl".into(), &sdk_url().into()).unwrap();
         worker.post_message(&msg).unwrap();
 
-        // 5. Wait for initialization
-        init_rx.await.unwrap();
-
         Ok(WorkerHandle {
             id,
             state,
@@ -171,6 +161,7 @@ impl WorkerHandle {
         })
     }
 
+    #[allow(dead_code)]
     fn run<F, Fut>(&self, f: F) -> Result<(), SpawnError>
     where
         F: FnOnce() -> Fut + Send + 'static,
@@ -261,12 +252,9 @@ fn current_module() -> JsValue {
 }
 
 fn on_message_handler(
-    init_tx: oneshot::Sender<()>,
     state: Arc<Mutex<WorkerState>>,
     name: String,
 ) -> Box<dyn FnMut(web_sys::MessageEvent)> {
-    let mut init_tx = Some(init_tx);
-
     Box::new(move |e: web_sys::MessageEvent| {
         let Ok(msg) = serde_wasm_bindgen::from_value::<WorkerMessage>(e.data()) else {
             error!(
@@ -279,12 +267,6 @@ fn on_message_handler(
         match msg {
             WorkerMessage::Log { message, level, ts } => {
                 log_worker_message(&name, message, level, ts);
-            }
-            WorkerMessage::Ready => {
-                info!(target: "WORKER", "[{}] Ready", name);
-                if let Some(tx) = init_tx.take() {
-                    let _ = tx.send(());
-                }
             }
             WorkerMessage::Idle => {
                 info!(target: "WORKER", "[{}] Idle", name);
