@@ -1,20 +1,21 @@
 //! Web Worker runtime bridge, running the Wasm module in a Web Worker.
 
 use std::collections::HashMap;
+use std::io::Write;
 use std::sync::Arc;
 
 use futures::lock::Mutex;
 use futures::{AsyncRead, AsyncWrite};
 use thiserror::Error;
 use tracing::error;
+use wasm_bindgen::JsCast;
 
 use crate::compile::Compiled;
 use crate::runtime::Runtime;
-use crate::runtime::non_blocking_pipe::{
-    NonBlockingPipeReader, NonBlockingPipeWriter, non_blocking_pipe,
-};
+use crate::runtime::message_writer::MessageWriter;
+use crate::runtime::non_blocking_pipe::non_blocking_pipe;
 use crate::runtime::worker_pool::{SpawnError, WorkerHandle, WorkerId, WorkerPool};
-use crate::wasi::wasi_ctx;
+use crate::wasi::wasi_ctx::{self, WasiReader};
 
 pub struct WorkerRuntime {
     active_sessions: Arc<Mutex<HashMap<WorkerId, Arc<WorkerHandle>>>>,
@@ -26,6 +27,8 @@ enum RunError {
     WasiError(#[from] wasi_ctx::WasiError),
     #[error("Runtime Error: {0}")]
     RuntimeError(#[from] wasmer::RuntimeError),
+    #[error("Compile Error: {0}")]
+    CompileError(#[from] wasmer::CompileError),
 }
 
 impl WorkerRuntime {
@@ -58,19 +61,18 @@ impl Runtime for WorkerRuntime {
     > {
         let (stdin_reader, stdin_writer) = non_blocking_pipe();
         let (stdout_reader, stdout_writer) = non_blocking_pipe();
-        let (stderr_reader, stderr_writer) = non_blocking_pipe();
+        let stderr_writer = MessageWriter::new("".into());
+        // let (stderr_reader, stderr_writer) = non_blocking_pipe();
 
         let pool = WorkerPool::global();
         let handle = pool
-            .run(move || {
-                let res = run_instance(compiled, stdin_reader, stdout_writer, stderr_writer);
+            .run(async move || {
+                let res = run_instance(compiled, stdin_reader, stdout_writer, stderr_writer).await;
                 if let Err(e) = res {
                     error!("Error running Wasm instance: {}", e);
                 }
             })
             .await?;
-
-        let _ = stderr_reader; // Currently unused
 
         let id = handle.id;
         self.active_sessions.lock().await.insert(handle.id, handle);
@@ -86,14 +88,25 @@ impl Runtime for WorkerRuntime {
     }
 }
 
-fn run_instance(
+async fn run_instance(
     compiled: Compiled,
-    stdin: NonBlockingPipeReader,
-    stdout: NonBlockingPipeWriter,
-    stderr: NonBlockingPipeWriter,
+    stdin: impl WasiReader + Send + Sync + 'static,
+    stdout: impl Write + Send + Sync + 'static,
+    stderr: impl Write + Send + Sync + 'static,
 ) -> Result<(), RunError> {
     let mut store = wasmer::Store::default();
-    let module = compiled.module;
+
+    // let js_module = compiled.js_module;
+    let wasm_bytes = compiled.wasm_bytes.as_ref();
+
+    let js_bytes = web_sys::js_sys::Uint8Array::from(wasm_bytes);
+    let promise = web_sys::js_sys::WebAssembly::compile(&js_bytes.into());
+    let js_module_value = wasm_bindgen_futures::JsFuture::from(promise).await.unwrap();
+    let js_module = js_module_value
+        .dyn_into::<web_sys::js_sys::WebAssembly::Module>()
+        .unwrap();
+    let module = (js_module, wasm_bytes.as_ref()).into();
+
     let wasi_ctx = wasi_ctx::WasiCtx::new()
         .set_stdin(stdin)
         .set_stdout(stdout)

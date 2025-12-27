@@ -1,7 +1,7 @@
-use futures::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use futures::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, io::BufReader};
 use serde_json::Value;
 use thiserror::Error;
-use tracing::info;
+use tracing::{error, info};
 use wasmi_plugin_pdk::{
     api::RequestHandler,
     rpc_message::{RpcError, RpcErrorResponse, RpcMessage, RpcResponse},
@@ -9,7 +9,7 @@ use wasmi_plugin_pdk::{
 use wasmi_plugin_rt::yield_now;
 
 pub struct Transport<R, W> {
-    reader: R,
+    reader: BufReader<R>,
     writer: W,
 }
 
@@ -18,8 +18,8 @@ pub enum TransportError {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
-    #[error("Serde error: {0}")]
-    Serde(#[from] serde_json::Error),
+    #[error("Serde error: {0}, data: {1}")]
+    Serde(serde_json::Error, String),
 
     #[error("EOF")]
     Eof,
@@ -30,7 +30,10 @@ pub enum TransportError {
 
 impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Transport<R, W> {
     pub fn new(reader: R, writer: W) -> Self {
-        Transport { reader, writer }
+        Transport {
+            reader: BufReader::new(reader),
+            writer,
+        }
     }
 
     pub async fn call(
@@ -41,17 +44,16 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Transport<R, W> {
     ) -> Result<RpcResponse, TransportError> {
         let id = 1;
         let request = RpcMessage::request(id, method.to_string(), params);
+        info!("Sending request: {:?}", request);
         self.write_message(request).await?;
 
-        let mut buffer = Vec::new();
-        let mut temp = [0u8; 256];
+        let mut line = String::new();
 
         loop {
-            match self.reader.read(&mut temp).await {
+            info!("Waiting for response...");
+            match self.reader.read_line(&mut line).await {
                 Ok(0) => return Err(TransportError::Eof),
-                Ok(n) => {
-                    buffer.extend_from_slice(&temp[..n]);
-                }
+                Ok(_) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     yield_now().await;
                     continue;
@@ -60,29 +62,29 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Transport<R, W> {
             }
 
             // Process complete lines
-            while let Some(pos) = buffer.iter().position(|&b| b == b'\n') {
-                let line = String::from_utf8_lossy(&buffer[..pos]).to_string();
-                buffer.drain(..=pos);
+            let msg: RpcMessage =
+                serde_json::from_str(&line).map_err(|e| TransportError::Serde(e, line.clone()))?;
+            line.clear();
 
-                let msg: RpcMessage = serde_json::from_str(&line)?;
-
-                match msg {
-                    RpcMessage::RpcResponse(resp) if resp.id == id => return Ok(resp),
-                    RpcMessage::RpcErrorResponse(err) if err.id == id => {
-                        return Err(TransportError::ErrorResponse(err));
-                    }
-                    RpcMessage::RpcRequest(req) => {
-                        self.handle_guest_req(req.id, &req.method, req.params, &handler)
-                            .await?;
-                    }
-                    _ => {}
+            match msg {
+                RpcMessage::RpcResponse(resp) if resp.id == id => return Ok(resp),
+                RpcMessage::RpcErrorResponse(err) if err.id == id => {
+                    return Err(TransportError::ErrorResponse(err));
                 }
+                RpcMessage::RpcRequest(req) => {
+                    self.handle_guest_req(req.id, &req.method, req.params, &handler)
+                        .await?;
+                }
+                _ => {}
             }
         }
     }
 
     async fn write_message(&mut self, msg: RpcMessage) -> Result<(), TransportError> {
-        let msg: String = serde_json::to_string(&msg)?;
+        let msg: String = serde_json::to_string(&msg).map_err(|e| {
+            error!("Serde error while serializing message: {}", e);
+            TransportError::Serde(e, "".to_string())
+        })?;
         let msg = format!("{}\n", msg);
         self.writer.write_all(msg.as_bytes()).await?;
         self.writer.flush().await?;

@@ -8,15 +8,15 @@ mod native_runtime;
 #[cfg(target_arch = "wasm32")]
 pub use worker_runtime::WorkerRuntime;
 #[cfg(target_arch = "wasm32")]
-pub mod shared_pipe;
+mod message_writer;
 #[cfg(target_arch = "wasm32")]
-pub mod thread_worker;
+mod thread_worker;
 #[cfg(target_arch = "wasm32")]
-pub mod worker_message;
+mod worker_message;
 #[cfg(target_arch = "wasm32")]
 pub mod worker_pool;
 #[cfg(target_arch = "wasm32")]
-pub mod worker_runtime;
+mod worker_runtime;
 
 use crate::compile::Compiled;
 use futures::{AsyncRead, AsyncWrite};

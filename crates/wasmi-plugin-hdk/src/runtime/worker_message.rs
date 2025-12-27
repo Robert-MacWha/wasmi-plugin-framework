@@ -8,6 +8,9 @@ pub enum WorkerMessage {
         level: String,
         ts: f64,
     },
+    PluginLog {
+        message: String,
+    },
     Ready,
     Idle,
 }

@@ -16,6 +16,9 @@ use crate::runtime::worker_message::WorkerMessage;
 
 pub type WorkerId = u64;
 
+/// Pool that manages a set of web workers for executing tasks
+/// asynchronously. Workers are reused for multiple tasks to minimize
+/// the overhead of spawning new workers.
 pub struct WorkerPool {
     state: Arc<Mutex<PoolState>>,
 }
@@ -35,6 +38,7 @@ pub struct WorkerHandle {
     state: Arc<Mutex<WorkerState>>,
     worker: web_sys::Worker,
     _on_message: wasm_bindgen::prelude::Closure<dyn FnMut(web_sys::MessageEvent)>,
+    _on_error: wasm_bindgen::prelude::Closure<dyn FnMut(web_sys::ErrorEvent)>,
 }
 
 #[derive(Debug, Error)]
@@ -55,12 +59,19 @@ impl WorkerPool {
         })
     }
 
-    pub async fn run<F>(&self, f: F) -> Result<Arc<WorkerHandle>, SpawnError>
+    pub async fn run<F, Fut>(&self, f: F) -> Result<Arc<WorkerHandle>, SpawnError>
     where
-        F: FnOnce() + Send + 'static,
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: Future<Output = ()> + 'static,
     {
         let handle = self.get_or_spawn_worker().await?;
-        handle.run(f)?;
+
+        let wrapper = move || {
+            wasm_bindgen_futures::spawn_local(async move {
+                f().await;
+            });
+        };
+        handle.run(wrapper)?;
         Ok(handle)
     }
 
@@ -114,6 +125,11 @@ impl WorkerHandle {
         let on_message = Closure::wrap(on_message);
         worker.set_onmessage(Some(on_message.as_ref().unchecked_ref()));
 
+        // Set up onerror handler
+        let on_error = on_error_handler(name.clone());
+        let on_error = Closure::wrap(on_error);
+        worker.set_onerror(Some(on_error.as_ref().unchecked_ref()));
+
         // 4. Send the "init" message with memory and module
         let msg = js_sys::Object::new();
         Reflect::set(&msg, &"type".into(), &"init".into()).unwrap();
@@ -130,6 +146,7 @@ impl WorkerHandle {
             state,
             worker,
             _on_message: on_message,
+            _on_error: on_error,
         })
     }
 
@@ -206,6 +223,9 @@ fn on_message_handler(
             WorkerMessage::Log { message, level, ts } => {
                 log_worker_message(&name, message, level, ts);
             }
+            WorkerMessage::PluginLog { message } => {
+                info!(target: "WORKER", "[{}] {}", name, message);
+            }
             WorkerMessage::Ready => {
                 info!(target: "WORKER", "[{}] Ready", name);
                 if let Some(tx) = init_tx.take() {
@@ -229,4 +249,17 @@ fn log_worker_message(name: &str, msg: String, level: String, ts: f64) {
         "error" => error!(target: "WORKER", "[{}] {}", name, msg),
         _ => info!(target: "WORKER", "[{}] {}", name, msg),
     }
+}
+
+fn on_error_handler(name: String) -> Box<dyn FnMut(web_sys::ErrorEvent)> {
+    Box::new(move |e: web_sys::ErrorEvent| {
+        error!(
+            target: "WORKER",
+            "[{}] Worker error: {} (at {}:{})",
+            name,
+            e.message(),
+            e.filename(),
+            e.lineno()
+        );
+    })
 }

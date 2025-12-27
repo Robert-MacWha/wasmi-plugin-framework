@@ -34,7 +34,7 @@ wasmer = { workspace = true, default-features = true}
 gloo-timers = { workspace = true }
 serde-wasm-bindgen = { workspace = true }
 wasmer = { workspace = true, features = ["js-default", "js-serializable-module"] }
-web-sys = { workspace = true, features=["Worker", "WorkerOptions", "WorkerType", "MessageEvent", "Blob", "BlobPropertyBag", "Url", "console", "TextDecoder"] }
+web-sys = { workspace = true, features=["Worker", "WorkerOptions", "DedicatedWorkerGlobalScope", "WorkerType", "MessageEvent", "ErrorEvent", "Blob", "BlobPropertyBag", "Url", "console", "TextDecoder"] }
 wasm-bindgen = { workspace = true }
 wasm-bindgen-futures = { workspace = true }
 

@@ -76,6 +76,7 @@ impl WasiReader for NonBlockingPipeReader {
     fn wait_ready(&self, _timeout: Option<std::time::Duration>) {
         // TODO: Make native-compatible version of this?
         // No-op
+std::hint::spin_loop();
     }
 }
 
