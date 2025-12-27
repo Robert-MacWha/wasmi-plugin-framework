@@ -104,7 +104,7 @@ impl WasiCtx {
         mut store: &mut wasmer::Store,
         module: &wasmer::Module,
     ) -> Result<wasmer::Function, WasiError> {
-        let (ctx, imports) = self.get_imports(&mut store);
+        let (ctx, imports) = self.get_imports(store);
 
         let instance = wasmer::Instance::new(&mut store, module, &imports)?;
         let memory = instance.exports.get_memory("memory")?;

@@ -185,7 +185,8 @@ mod benchmarks {
         bench_lifecycle,
         bench_prime_sieve_small,
         bench_prime_sieve_large,
-        bench_call_many
+        bench_call_many,
+        bench_call_many_async
     );
 }
 

@@ -280,9 +280,6 @@ fn on_message_handler(
             WorkerMessage::Log { message, level, ts } => {
                 log_worker_message(&name, message, level, ts);
             }
-            WorkerMessage::PluginLog { message } => {
-                info!(target: "WORKER", "[{}] {}", name, message);
-            }
             WorkerMessage::Ready => {
                 info!(target: "WORKER", "[{}] Ready", name);
                 if let Some(tx) = init_tx.take() {

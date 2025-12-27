@@ -55,4 +55,5 @@ jobs:
         touch crates/worker/pkg/worker.js
         touch crates/worker/pkg/worker_bg.wasm
 
-    - run: nix-shell --run "make clippy"
+    - run: nix-shell --run "make clippy-native"
+    - run: nix-shell --run "make clippy-wasm"

@@ -13,11 +13,9 @@ categories.workspace = true
 exclude.workspace = true
 
 [dependencies]
-async-trait = { workspace = true }
 futures = { workspace = true }
 getrandom = { workspace = true }
 serde = { workspace = true }
-serde_bytes = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
@@ -28,27 +26,26 @@ web-time = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { workspace = true }
-wasmer = { workspace = true, default-features = true}
+wasmer = { workspace = true, default-features = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 gloo-timers = { workspace = true }
 serde-wasm-bindgen = { workspace = true }
-wasmer = { workspace = true, features = ["js-default", "js-serializable-module"] }
-web-sys = { workspace = true, features=["Worker", "WorkerOptions", "DedicatedWorkerGlobalScope", "WorkerType", "MessageEvent", "ErrorEvent", "Blob", "BlobPropertyBag", "Url", "console", "TextDecoder"] }
 wasm-bindgen = { workspace = true }
 wasm-bindgen-futures = { workspace = true }
+wasmer = { workspace = true, features = ["js-default", "js-serializable-module"] }
+web-sys = { workspace = true, features = ["Worker", "WorkerOptions", "DedicatedWorkerGlobalScope", "WorkerType", "MessageEvent", "ErrorEvent", "Blob", "BlobPropertyBag", "Url", "console", "TextDecoder"] }
 
 [dev-dependencies]
 tracing-subscriber = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-tracing-test = { version = "0.2.5", features = ["no-env-filter"] }
-criterion = "0.8.0"
+criterion = { workspace = true }
+tracing-test = { workspace = true, features = ["no-env-filter"] }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 tracing-wasm = { workspace = true }
-wasm-bindgen-test = "0.3"
-web-sys = { version = "0.3", features = ["Performance", "Window"] }
+wasm-bindgen-test = { workspace = true }
 
 [[bench]]
 name = "benchmark"

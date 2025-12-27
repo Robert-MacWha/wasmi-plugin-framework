@@ -9,7 +9,7 @@ use futures::{AsyncRead, AsyncWrite};
 use thiserror::Error;
 use tracing::{error, info};
 use wasm_bindgen::JsCast;
-use web_sys::js_sys::{self, WebAssembly};
+use web_sys::js_sys::WebAssembly;
 
 use crate::compile::Compiled;
 use crate::runtime::Runtime;
@@ -25,11 +25,11 @@ pub struct WorkerRuntime {
 #[derive(Debug, Error)]
 enum RunError {
     #[error("WASI Error: {0}")]
-    WasiError(#[from] wasi_ctx::WasiError),
+    Wasi(#[from] wasi_ctx::WasiError),
     #[error("Runtime Error: {0}")]
-    RuntimeError(#[from] wasmer::RuntimeError),
+    Runtime(#[from] wasmer::RuntimeError),
     #[error("Compile Error: {0}")]
-    CompileError(#[from] wasmer::CompileError),
+    Compile(#[from] wasmer::CompileError),
 }
 
 impl WorkerRuntime {
@@ -86,7 +86,7 @@ impl Runtime for WorkerRuntime {
         let id = handle.id;
         self.active_sessions.lock().await.insert(handle.id, handle);
 
-        return Ok((id, stdin_writer, stdout_reader));
+        Ok((id, stdin_writer, stdout_reader))
     }
 
     async fn terminate(self, instance_id: u64) {
@@ -100,7 +100,7 @@ impl Runtime for WorkerRuntime {
 async fn run_instance(
     js_module: wasm_bindgen::JsValue,
     wasm_bytes: &[u8],
-    stdin: impl WasiReader + Send + Sync + 'static,
+    stdin: impl WasiReader + 'static,
     stdout: impl Write + Send + Sync + 'static,
     stderr: impl Write + Send + Sync + 'static,
 ) -> Result<(), RunError> {

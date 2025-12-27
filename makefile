@@ -9,9 +9,17 @@ build-plugin:
 
 build-all: build-plugin
 
-clippy: build-all
+clippy-native: build-all
 	@echo "--- Running Clippy Lints ---"
 	cargo clippy -- -D warnings
+
+clippy-wasm: build-all
+	@echo "--- Running Clippy Lints for Wasm ---"
+	cargo clippy \
+		-Z build-std=std,panic_abort \
+		-p wasmi-plugin-hdk \
+		--target wasm32-unknown-unknown \
+		-- -D warnings
 
 test-native: build-plugin
 	@echo "--- Running Plugin Tests ---"
