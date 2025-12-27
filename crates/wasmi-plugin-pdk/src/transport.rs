@@ -3,20 +3,20 @@ use std::io::{Read, Write};
 use serde_json::Value;
 
 use crate::{
-    rpc_message::RpcResponse,
+    rpc_message::{RpcError, RpcResponse},
     transport_driver::{DriverError, TransportDriver},
 };
 
-pub trait SyncTransport {
-    fn call(&self, method: &str, params: Value) -> Result<RpcResponse, DriverError>;
+pub trait SyncTransport<E: Into<RpcError>> {
+    fn call(&self, method: &str, params: Value) -> Result<RpcResponse, E>;
 }
 
-pub trait AsyncTransport {
+pub trait AsyncTransport<E: Into<RpcError>> {
     fn call_async(
         &self,
         method: &str,
         params: Value,
-    ) -> impl std::future::Future<Output = Result<RpcResponse, DriverError>> + Send;
+    ) -> impl std::future::Future<Output = Result<RpcResponse, E>> + Send;
 }
 
 pub struct Transport<R = std::io::Stdin, W = std::io::Stdout> {
@@ -43,13 +43,13 @@ impl<R: Read, W: Write> Transport<R, W> {
     }
 }
 
-impl SyncTransport for Transport {
+impl SyncTransport<DriverError> for Transport {
     fn call(&self, method: &str, params: Value) -> Result<RpcResponse, DriverError> {
         self.driver.call(method, params)
     }
 }
 
-impl AsyncTransport for Transport {
+impl AsyncTransport<DriverError> for Transport {
     fn call_async(
         &self,
         method: &str,
