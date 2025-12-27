@@ -43,12 +43,12 @@ fn get_host_server() -> HostServer<(Option<PluginId>, ())> {
 
 fn setup_logs() {
     INIT.call_once(|| {
-        tracing_wasm::set_as_global_default_with_config(
-            tracing_wasm::WASMLayerConfigBuilder::new()
-                .set_console_config(tracing_wasm::ConsoleConfig::ReportWithoutConsoleColor)
-                .set_max_level(tracing::Level::INFO)
-                .build(),
-        );
+        // tracing_wasm::set_as_global_default_with_config(
+        //     tracing_wasm::WASMLayerConfigBuilder::new()
+        //         .set_console_config(tracing_wasm::ConsoleConfig::ReportWithoutConsoleColor)
+        //         .set_max_level(tracing::Level::INFO)
+        //         .build(),
+        // );
     });
 }
 
@@ -70,30 +70,30 @@ async fn bench_ping_wasm(c: &mut Criterion) {
     .await;
 }
 
-// /// Benchmark the full lifecycle of creating a plugin instance and calling a ping request.
-// /// Tests the overhead of plugin instantiation.
-// #[wasm_bindgen_bench]
-// async fn bench_lifecycle(c: &mut Criterion) {
-//     setup_logs();
-//     let wasm_bytes = Arc::new(load_plugin_wasm());
-//     let handler = Arc::new(get_host_server());
+/// Benchmark the full lifecycle of creating a plugin instance and calling a ping request.
+/// Tests the overhead of plugin instantiation.
+#[wasm_bindgen_bench]
+async fn bench_lifecycle(c: &mut Criterion) {
+    setup_logs();
+    let wasm_bytes = Arc::new(load_plugin_wasm());
+    let handler = Arc::new(get_host_server());
 
-//     c.bench_async_function("lifecycle", |b| {
-//         let wasm_bytes = wasm_bytes.clone();
-//         let handler = handler.clone();
-//         Box::pin(b.iter_future(move || {
-//             let wasm_bytes = wasm_bytes.clone();
-//             let handler = handler.clone();
-//             async move {
-//                 let plugin = Plugin::new("test_plugin", &wasm_bytes, handler)
-//                     .await
-//                     .unwrap();
-//                 plugin.call("ping", serde_json::Value::Null).await.unwrap();
-//             }
-//         }))
-//     })
-//     .await;
-// }
+    c.bench_async_function("lifecycle", |b| {
+        let wasm_bytes = wasm_bytes.clone();
+        let handler = handler.clone();
+        Box::pin(b.iter_future(move || {
+            let wasm_bytes = wasm_bytes.clone();
+            let handler = handler.clone();
+            async move {
+                let plugin = Plugin::new("test_plugin", &wasm_bytes, handler)
+                    .await
+                    .unwrap();
+                plugin.call("ping", serde_json::Value::Null).await.unwrap();
+            }
+        }))
+    })
+    .await;
+}
 
 /// Benchmark the prime sieve function with a small input. Primarily tests the overhead
 /// of calling into the wasm module.

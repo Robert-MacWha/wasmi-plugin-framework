@@ -2,9 +2,11 @@
 mod benchmarks {
     use criterion::{Criterion, criterion_group};
     use serde_json::Value;
-    use std::sync::{Arc, Once};
+    use std::{
+        sync::{Arc, Once},
+        time::Duration,
+    };
     use tokio::runtime::Builder;
-    use tracing_subscriber::EnvFilter;
     use wasmi_plugin_hdk::{
         plugin::{Plugin, PluginId},
         server::HostServer,
@@ -17,6 +19,17 @@ mod benchmarks {
 
     fn load_plugin_wasm() -> Vec<u8> {
         PLUGIN_WASM.to_vec()
+    }
+
+    async fn load_plugin() -> Plugin<HostServer<(Option<PluginId>, ())>> {
+        let wasm_bytes = load_plugin_wasm();
+        let handler = Arc::new(get_host_server());
+        let plugin = Plugin::new("test_plugin", &wasm_bytes, handler)
+            .await
+            .unwrap()
+            .with_timeout(Duration::from_secs(10));
+
+        plugin
     }
 
     fn get_host_server() -> HostServer<(Option<PluginId>, ())> {
@@ -44,10 +57,7 @@ mod benchmarks {
         setup_logs();
 
         let rt = Builder::new_current_thread().enable_all().build().unwrap();
-
-        let wasm_bytes = load_plugin_wasm();
-        let handler = Arc::new(get_host_server());
-        let plugin = Plugin::new("test_plugin", wasm_bytes.clone(), handler.clone()).unwrap();
+        let plugin = rt.block_on(load_plugin());
 
         c.bench_function("ping", |b| {
             b.iter(|| {
@@ -72,9 +82,10 @@ mod benchmarks {
 
         c.bench_function("lifecycle", |b| {
             b.iter(|| {
-                let plugin =
-                    Plugin::new("test_plugin", wasm_bytes.clone(), handler.clone()).unwrap();
                 let fut = async {
+                    let plugin = Plugin::new("test_plugin", &wasm_bytes, handler.clone())
+                        .await
+                        .unwrap();
                     plugin.call("ping", Value::Null).await.unwrap();
                 };
 
@@ -89,10 +100,7 @@ mod benchmarks {
         setup_logs();
 
         let rt = Builder::new_current_thread().enable_all().build().unwrap();
-
-        let wasm_bytes = load_plugin_wasm();
-        let handler = Arc::new(get_host_server());
-        let plugin = Plugin::new("test_plugin", wasm_bytes.clone(), handler).unwrap();
+        let plugin = rt.block_on(load_plugin());
 
         c.bench_function("prime_sieve_small", |b| {
             b.iter(|| {
@@ -113,10 +121,7 @@ mod benchmarks {
         setup_logs();
 
         let rt = Builder::new_current_thread().enable_all().build().unwrap();
-
-        let wasm_bytes = load_plugin_wasm();
-        let handler = Arc::new(get_host_server());
-        let plugin = Plugin::new("test_plugin", wasm_bytes.clone(), handler).unwrap();
+        let plugin = rt.block_on(load_plugin());
 
         c.bench_function("prime_sieve_large", |b| {
             b.iter(|| {
@@ -134,17 +139,37 @@ mod benchmarks {
 
     /// Benchmark sending many echo requests to the host, and receiving responses.
     pub fn bench_call_many(c: &mut Criterion) {
-        let rt = Builder::new_current_thread().enable_all().build().unwrap();
+        setup_logs();
 
-        let wasm_bytes = load_plugin_wasm();
-        let handler = Arc::new(get_host_server());
-        let plugin = Plugin::new("test_plugin", wasm_bytes.clone(), handler).unwrap();
+        let rt = Builder::new_current_thread().enable_all().build().unwrap();
+        let plugin = rt.block_on(load_plugin());
 
         c.bench_function("call_many", |b| {
             b.iter(|| {
                 let fut = async {
                     plugin
                         .call("call_many", Value::Number(200.into()))
+                        .await
+                        .unwrap();
+                };
+
+                rt.block_on(fut);
+            })
+        });
+    }
+
+    /// Benchmark sending many echo requests to the host, and receiving responses.
+    pub fn bench_call_many_async(c: &mut Criterion) {
+        setup_logs();
+
+        let rt = Builder::new_current_thread().enable_all().build().unwrap();
+        let plugin = rt.block_on(load_plugin());
+
+        c.bench_function("call_many_async", |b| {
+            b.iter(|| {
+                let fut = async {
+                    plugin
+                        .call("call_many_async", Value::Number(200.into()))
                         .await
                         .unwrap();
                 };
