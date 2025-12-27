@@ -8,9 +8,10 @@ use wasmi_plugin_pdk::{
 };
 use wasmi_plugin_rt::yield_now;
 
-pub struct Transport<R, W> {
+pub struct Transport<R, W, H> {
     reader: BufReader<R>,
     writer: W,
+    handler: H,
 }
 
 #[derive(Debug, Error)]
@@ -28,19 +29,19 @@ pub enum TransportError {
     ErrorResponse(RpcErrorResponse),
 }
 
-impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Transport<R, W> {
-    pub fn new(reader: R, writer: W) -> Self {
+impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin, H: RequestHandler<RpcError>> Transport<R, W, H> {
+    pub fn new(reader: R, writer: W, handler: H) -> Self {
         Transport {
             reader: BufReader::new(reader),
             writer,
+            handler,
         }
     }
 
-    pub async fn call(
+    pub async fn call_async(
         mut self,
         method: &str,
         params: Value,
-        handler: Option<impl RequestHandler<RpcError>>,
     ) -> Result<RpcResponse, TransportError> {
         let id = 1;
         let request = RpcMessage::request(id, method.to_string(), params);
@@ -74,7 +75,7 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Transport<R, W> {
                     return Err(TransportError::ErrorResponse(err));
                 }
                 RpcMessage::RpcRequest(req) => {
-                    self.handle_guest_req(req.id, &req.method, req.params, &handler)
+                    self.handle_guest_req(req.id, &req.method, req.params)
                         .await?;
                 }
                 _ => {}
@@ -99,14 +100,8 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin> Transport<R, W> {
         id: u64,
         method: &str,
         params: Value,
-        handler: &Option<impl RequestHandler<RpcError>>,
     ) -> Result<(), TransportError> {
-        let Some(handler) = handler else {
-            info!("No handler, request ignored");
-            return Ok(());
-        };
-
-        match handler.handle(method, params).await {
+        match self.handler.handle(method, params).await {
             Ok(result) => {
                 self.write_message(RpcMessage::response(id, result)).await?;
             }

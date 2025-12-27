@@ -136,9 +136,9 @@ impl<H: HostHandler + 'static> Plugin<H> {
             handler: self.handler.clone(),
             uuid: self.id,
         };
-        let transport = Transport::new(stdout_reader, stdin_writer);
+        let transport = Transport::new(stdout_reader, stdin_writer, handler);
 
-        let transport_task = transport.call(method, params, Some(handler)).fuse();
+        let transport_task = transport.call_async(method, params).fuse();
         let timeout = sleep(self.timeout).fuse();
         futures::pin_mut!(transport_task, timeout);
 

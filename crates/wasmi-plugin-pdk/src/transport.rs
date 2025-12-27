@@ -7,6 +7,18 @@ use crate::{
     transport_driver::{DriverError, TransportDriver},
 };
 
+pub trait SyncTransport {
+    fn call(&self, method: &str, params: Value) -> Result<RpcResponse, DriverError>;
+}
+
+pub trait AsyncTransport {
+    fn call_async(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> impl std::future::Future<Output = Result<RpcResponse, DriverError>> + Send;
+}
+
 pub struct Transport<R = std::io::Stdin, W = std::io::Stdout> {
     driver: TransportDriver<R, W>,
 }
@@ -29,16 +41,20 @@ impl<R: Read, W: Write> Transport<R, W> {
 
         (transport, driver)
     }
+}
 
-    pub fn call(&self, method: &str, params: Value) -> Result<RpcResponse, DriverError> {
+impl SyncTransport for Transport {
+    fn call(&self, method: &str, params: Value) -> Result<RpcResponse, DriverError> {
         self.driver.call(method, params)
     }
+}
 
-    pub async fn call_async(
+impl AsyncTransport for Transport {
+    fn call_async(
         &self,
         method: &str,
         params: Value,
-    ) -> Result<RpcResponse, DriverError> {
-        self.driver.call_async(method, params).await
+    ) -> impl std::future::Future<Output = Result<RpcResponse, DriverError>> + Send {
+        self.driver.call_async(method, params)
     }
 }

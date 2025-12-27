@@ -3,7 +3,11 @@ use serde_json::{self, Value};
 use std::io::stderr;
 use tracing::{error, info, level_filters::LevelFilter};
 use tracing_subscriber::fmt;
-use wasmi_plugin_pdk::{rpc_message::RpcError, server::PluginServer, transport::Transport};
+use wasmi_plugin_pdk::{
+    rpc_message::RpcError,
+    server::PluginServer,
+    transport::{AsyncTransport, SyncTransport, Transport},
+};
 
 async fn ping(_: Transport, _: ()) -> Result<Value, RpcError> {
     Ok(Value::String("pong".to_string()))
