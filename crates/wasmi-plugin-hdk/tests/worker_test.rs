@@ -9,7 +9,7 @@ use std::{
 use tracing::info;
 use wasm_bindgen_test::{wasm_bindgen_test, wasm_bindgen_test_configure};
 use wasmi_plugin_hdk::{
-    runtime::non_blocking_pipe::non_blocking_pipe, worker_pool::worker_pool::WorkerPool,
+    runtime::non_blocking_pipe::non_blocking_pipe, worker_pool::pool::WorkerPool,
 };
 
 wasm_bindgen_test_configure!(run_in_browser);

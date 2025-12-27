@@ -10,6 +10,7 @@ unsafe impl Send for MessageWriter {}
 unsafe impl Sync for MessageWriter {}
 
 impl MessageWriter {
+    #[allow(dead_code)]
     pub fn new(name: String) -> Self {
         Self { name }
     }

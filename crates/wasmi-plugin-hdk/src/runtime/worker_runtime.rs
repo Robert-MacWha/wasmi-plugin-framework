@@ -17,7 +17,7 @@ use crate::compile::Compiled;
 use crate::runtime::Runtime;
 use crate::runtime::non_blocking_pipe::non_blocking_pipe;
 use crate::wasi::wasi_ctx::{self, WasiReader};
-use crate::worker_pool::worker_pool::{SpawnError, WorkerHandle, WorkerId, WorkerPool};
+use crate::worker_pool::pool::{SpawnError, WorkerHandle, WorkerId, WorkerPool};
 
 pub struct WorkerRuntime {
     active_sessions: Arc<Mutex<HashMap<WorkerId, Arc<WorkerHandle>>>>,
