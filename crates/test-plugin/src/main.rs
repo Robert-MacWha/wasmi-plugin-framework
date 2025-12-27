@@ -39,10 +39,10 @@ async fn call(transport: Transport, _: ()) -> Result<Value, RpcError> {
 
 async fn call_many(transport: Transport, limit: u64) -> Result<(), RpcError> {
     let mut tasks = vec![];
-    for i in 0..limit {
+    for _ in 0..limit {
         let transport_clone = transport.clone();
         let task = async move {
-            let resp = transport_clone.call("ping", Value::Null)?;
+            transport_clone.call("ping", Value::Null)?;
             Ok::<(), RpcError>(())
         };
         tasks.push(task);
@@ -65,10 +65,10 @@ async fn call_async(transport: Transport, _: ()) -> Result<Value, RpcError> {
 
 async fn call_many_async(transport: Transport, limit: u64) -> Result<(), RpcError> {
     let mut tasks = vec![];
-    for i in 0..limit {
+    for _ in 0..limit {
         let transport_clone = transport.clone();
         let task = async move {
-            let resp = transport_clone.call_async("ping", Value::Null).await?;
+            transport_clone.call_async("ping", Value::Null).await?;
             Ok::<(), RpcError>(())
         };
         tasks.push(task);
