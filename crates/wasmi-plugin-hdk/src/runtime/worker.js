@@ -33,6 +33,14 @@ globalThis.onmessage = async ev => {
             } finally {
                 globalThis.postMessage({ type: "Idle" });
             }
+        } else if (ev.data.type === "run_with") {
+            const { taskPtr, extra } = ev.data;
+            console.log("(JS) extra:", extra, typeof extra);
+            try {
+                await wasmPkg.execute_worker_task_with(taskPtr, extra);
+            } finally {
+                globalThis.postMessage({ type: "Idle" });
+            }
         } else {
             console.error(`Unknown message type: ${type}`);
         }

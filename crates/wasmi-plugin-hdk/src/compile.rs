@@ -9,8 +9,8 @@ pub struct Compiled {
     #[cfg(not(target_arch = "wasm32"))]
     pub module: wasmer::Module,
 
-    // #[cfg(target_arch = "wasm32")]
-    // pub js_module: web_sys::js_sys::WebAssembly::Module,
+    #[cfg(target_arch = "wasm32")]
+    pub js_module: web_sys::js_sys::WebAssembly::Module,
     #[cfg(target_arch = "wasm32")]
     pub wasm_bytes: Arc<[u8]>,
 }
@@ -36,24 +36,18 @@ impl Compiled {
 
     #[cfg(target_arch = "wasm32")]
     pub async fn new(name: &str, wasm_bytes: &[u8]) -> Result<Self, wasmer::CompileError> {
-        // use wasm_bindgen::JsCast;
+        use wasm_bindgen::JsCast;
+        use wasm_bindgen_futures::JsFuture;
+        use web_sys::js_sys::{Uint8Array, WebAssembly};
 
-        // TODO: Compile module once and cache it instead of re-compiling for every call.
-        //? Because we're in wasm32-unknown-unknown AND we want to have Shared Memory
-        //? (target-feature=+atomics,+bulk-memory),
-        //? we have to use the WebAssembly.compile async function and pass the compiled
-        //? native mmodule to wasmer. Wasmer only supports compiling via `WebAssembly::new()`,
-        //? which is illegal for use with Shared Memory.
-        // let js_bytes = web_sys::js_sys::Uint8Array::from(wasm_bytes);
-        // let promise = web_sys::js_sys::WebAssembly::compile(&js_bytes.into());
-        // let js_module_value = wasm_bindgen_futures::JsFuture::from(promise).await.unwrap();
-        // let js_module = js_module_value
-        //     .dyn_into::<web_sys::js_sys::WebAssembly::Module>()
-        //     .unwrap();
+        let js_bytes = Uint8Array::from(wasm_bytes);
+        let promise = WebAssembly::compile(&js_bytes.into());
+        let js_module_value = JsFuture::from(promise).await.unwrap();
+        let js_module = js_module_value.dyn_into::<WebAssembly::Module>().unwrap();
 
         Ok(Compiled {
             name: name.to_string(),
-            // js_module,
+            js_module,
             wasm_bytes: Arc::from(wasm_bytes),
         })
     }

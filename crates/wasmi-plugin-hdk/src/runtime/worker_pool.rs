@@ -75,6 +75,27 @@ impl WorkerPool {
         Ok(handle)
     }
 
+    pub async fn run_with<F, Fut>(
+        &self,
+        extra: &wasm_bindgen::JsValue,
+        f: F,
+    ) -> Result<Arc<WorkerHandle>, SpawnError>
+    where
+        F: FnOnce(wasm_bindgen::JsValue) -> Fut + Send + 'static,
+        Fut: Future<Output = ()> + 'static,
+    {
+        let handle = self.get_or_spawn_worker().await?;
+
+        let wrapper = move |v: wasm_bindgen::JsValue| -> LocalBoxFuture<'static, ()> {
+            let v = v.clone();
+            Box::pin(async move {
+                f(v).await;
+            })
+        };
+        handle.run_with(extra, wrapper)?;
+        Ok(handle)
+    }
+
     pub fn terminate(&self, worker_id: WorkerId) {
         let mut state = self.state.lock().unwrap();
         if let Some(pos) = state.workers.iter().position(|w| w.id == worker_id) {
@@ -167,6 +188,36 @@ impl WorkerHandle {
         let msg = js_sys::Object::new();
         Reflect::set(&msg, &"type".into(), &"run".into()).unwrap();
         Reflect::set(&msg, &"taskPtr".into(), &ptr.into()).unwrap();
+        worker.post_message(&msg).unwrap();
+
+        Ok(())
+    }
+
+    fn run_with<F, Fut>(&self, extra: &wasm_bindgen::JsValue, f: F) -> Result<(), SpawnError>
+    where
+        F: FnOnce(wasm_bindgen::JsValue) -> Fut + Send + 'static,
+        Fut: Future<Output = ()> + 'static,
+    {
+        info!("run_with: extra type = {:?}", extra.js_typeof());
+        info!(
+            "run_with: is Module = {:?}",
+            extra.is_instance_of::<web_sys::js_sys::WebAssembly::Module>()
+        );
+
+        // 1. Box the function and get a raw pointer
+        let box_f: Box<
+            Box<dyn FnOnce(wasm_bindgen::JsValue) -> LocalBoxFuture<'static, ()> + Send>,
+        > = Box::new(Box::new(move |v| Box::pin(f(v))));
+        let ptr = Box::into_raw(box_f) as u32;
+
+        // 2. Load my worker
+        let worker = &self.worker;
+
+        // 3. Send the "run" message with raw ptr
+        let msg = js_sys::Object::new();
+        Reflect::set(&msg, &"type".into(), &"run_with".into()).unwrap();
+        Reflect::set(&msg, &"taskPtr".into(), &ptr.into()).unwrap();
+        Reflect::set(&msg, &"extra".into(), extra).unwrap();
         worker.post_message(&msg).unwrap();
 
         Ok(())
