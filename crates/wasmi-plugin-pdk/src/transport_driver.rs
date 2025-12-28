@@ -51,14 +51,8 @@ pub enum DriverError {
     #[error("EOF")]
     Eof,
 
-    #[error("Unmatched response ID")]
-    UnmatchedResponseId,
-
-    #[error("Error Response: {0:?}")]
-    ErrorResponse(RpcErrorResponse),
-
-    #[error("Missing Response")]
-    MissingResponse,
+    #[error("RPC Error: {0:?}")]
+    RpcError(#[from] RpcError),
 }
 
 impl From<DriverError> for RpcError {
@@ -101,7 +95,7 @@ impl<R: Read, W: Write> TransportDriver<R, W> {
 
         // Await the response
         let res = revc_rx.await?;
-        let res = res.map_err(DriverError::ErrorResponse)?;
+        let res = res.map_err(|e| DriverError::RpcError(e.error))?;
         Ok(res)
     }
 
@@ -122,10 +116,9 @@ impl<R: Read, W: Write> TransportDriver<R, W> {
         loop {
             let would_block = self.step(&mut reader, &mut line)?;
 
-            // Check if we have received the response
             match res_rx.try_recv() {
                 Ok(Some(res)) => {
-                    let res = res.map_err(DriverError::ErrorResponse)?;
+                    let res = res.map_err(|e| DriverError::RpcError(e.error))?;
                     return Ok(res);
                 }
                 Ok(None) => {

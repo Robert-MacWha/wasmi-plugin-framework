@@ -3,15 +3,16 @@ use std::io::{Read, Write};
 use serde_json::Value;
 
 use crate::{
-    rpc_message::{RpcError, RpcResponse},
+    api::ApiError,
+    rpc_message::RpcResponse,
     transport_driver::{DriverError, TransportDriver},
 };
 
-pub trait SyncTransport<E: Into<RpcError>> {
+pub trait SyncTransport<E: ApiError> {
     fn call(&self, method: &str, params: Value) -> Result<RpcResponse, E>;
 }
 
-pub trait AsyncTransport<E: Into<RpcError>> {
+pub trait AsyncTransport<E: ApiError> {
     fn call_async(
         &self,
         method: &str,

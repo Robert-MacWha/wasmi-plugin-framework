@@ -96,6 +96,12 @@ impl RpcError {
     }
 }
 
+impl From<RpcErrorResponse> for RpcError {
+    fn from(value: RpcErrorResponse) -> Self {
+        value.error
+    }
+}
+
 pub fn to_rpc_err<E: std::error::Error>(e: E) -> RpcError {
     RpcError::Custom(e.to_string())
 }
