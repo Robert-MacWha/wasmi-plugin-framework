@@ -1,11 +1,11 @@
 use rand::Rng;
 use serde_json::{self, Value};
 use std::io::stderr;
-use tracing::{error, info, level_filters::LevelFilter};
+use tracing::{info, level_filters::LevelFilter};
 use tracing_subscriber::fmt;
 use wasmi_plugin_pdk::{
-    rpc_message::RpcError,
-    server::PluginServer,
+    rpc_message::{RpcError, RpcErrorContext},
+    runner::PluginRunner,
     transport::{AsyncTransport, SyncTransport, Transport},
 };
 
@@ -22,10 +22,7 @@ async fn get_random_number(_: Transport, _: ()) -> Result<Value, RpcError> {
 async fn get_time(_: Transport, _: ()) -> Result<Value, RpcError> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|e| {
-            error!("System time before UNIX EPOCH: {}", e);
-            RpcError::InternalError
-        })?;
+        .context("Time before UNIX_EPOCH")?;
     Ok(Value::Number(now.as_secs().into()))
 }
 
@@ -129,7 +126,7 @@ fn main() {
     info!("Starting plugin...");
     info!("Test");
 
-    PluginServer::new()
+    PluginRunner::new()
         .with_method("ping", ping)
         .with_method("get_random_number", get_random_number)
         .with_method("get_time", get_time)

@@ -6,10 +6,8 @@ use std::{
 };
 use tracing::info;
 use wasm_bindgen_test::{Criterion, wasm_bindgen_bench};
-use wasmi_plugin_hdk::{
-    plugin::{Plugin, PluginId},
-    server::HostServer,
-};
+use wasmi_plugin_hdk::{plugin::Plugin, plugin_id::PluginId, server::HostServer};
+use wasmi_plugin_pdk::transport::AsyncTransport;
 
 wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
@@ -24,10 +22,11 @@ fn load_plugin_wasm() -> Vec<u8> {
 async fn load_plugin() -> Plugin {
     let wasm_bytes = load_plugin_wasm();
     let handler = Arc::new(get_host_server());
-    let plugin = Plugin::new("test_plugin", &wasm_bytes, handler)
+    let plugin = Plugin::new("test_plugin", wasm_bytes, handler)
+        .with_timeout(Duration::from_secs(10))
+        .build()
         .await
-        .unwrap()
-        .with_timeout(Duration::from_secs(10));
+        .unwrap();
 
     plugin
 }
@@ -62,7 +61,10 @@ async fn bench_ping_wasm(c: &mut Criterion) {
         Box::pin(b.iter_future(move || {
             let plugin = plugin.clone();
             async move {
-                plugin.call("ping", serde_json::Value::Null).await.unwrap();
+                plugin
+                    .call_async("ping", serde_json::Value::Null)
+                    .await
+                    .unwrap();
                 info!("ping call completed");
             }
         }))
@@ -75,7 +77,7 @@ async fn bench_ping_wasm(c: &mut Criterion) {
 #[wasm_bindgen_bench]
 async fn bench_lifecycle(c: &mut Criterion) {
     setup_logs();
-    let wasm_bytes = Arc::new(load_plugin_wasm());
+    let wasm_bytes = load_plugin_wasm();
     let handler = Arc::new(get_host_server());
 
     c.bench_async_function("lifecycle", |b| {
@@ -85,10 +87,14 @@ async fn bench_lifecycle(c: &mut Criterion) {
             let wasm_bytes = wasm_bytes.clone();
             let handler = handler.clone();
             async move {
-                let plugin = Plugin::new("test_plugin", &wasm_bytes, handler)
+                let plugin = Plugin::new("test_plugin", wasm_bytes.clone(), handler)
+                    .build()
                     .await
                     .unwrap();
-                plugin.call("ping", serde_json::Value::Null).await.unwrap();
+                plugin
+                    .call_async("ping", serde_json::Value::Null)
+                    .await
+                    .unwrap();
             }
         }))
     })
@@ -108,7 +114,7 @@ async fn bench_prime_sieve_small(c: &mut Criterion) {
             let plugin = plugin.clone();
             async move {
                 plugin
-                    .call("prime_sieve", Value::Number(1.into()))
+                    .call_async("prime_sieve", Value::Number(1.into()))
                     .await
                     .unwrap();
             }
@@ -129,7 +135,7 @@ async fn bench_prime_sieve_large(c: &mut Criterion) {
             let plugin = plugin.clone();
             async move {
                 plugin
-                    .call("prime_sieve", Value::Number(1_000_000.into()))
+                    .call_async("prime_sieve", Value::Number(1_000_000.into()))
                     .await
                     .unwrap();
             }
@@ -151,7 +157,7 @@ async fn bench_call_many(c: &mut Criterion) {
             async move {
                 info!("Starting call_many benchmark iteration...");
                 plugin
-                    .call("call_many", Value::Number(200.into()))
+                    .call_async("call_many", Value::Number(200.into()))
                     .await
                     .unwrap();
             }
@@ -172,7 +178,7 @@ async fn bench_call_many_async(c: &mut Criterion) {
             async move {
                 info!("Starting call_many_async benchmark iteration...");
                 plugin
-                    .call("call_many_async", Value::Number(200.into()))
+                    .call_async("call_many_async", Value::Number(200.into()))
                     .await
                     .unwrap();
             }

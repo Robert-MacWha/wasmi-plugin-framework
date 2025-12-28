@@ -4,13 +4,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use futures::io::BufReader;
 use futures::lock::Mutex;
-use futures::{AsyncBufReadExt, AsyncRead, AsyncWrite};
+use futures::{AsyncRead, AsyncWrite};
 use thiserror::Error;
-use tokio::spawn;
 use tokio::task::{JoinHandle, spawn_blocking};
-use tracing::{error, info};
+use tracing::error;
 use wasmer::Store;
 
 use crate::compile::Compiled;
@@ -63,25 +61,24 @@ impl Runtime for NativeRuntime {
             u64,
             impl AsyncWrite + Unpin + Send + Sync + 'static,
             impl AsyncRead + Unpin + Send + Sync + 'static,
+            impl AsyncRead + Unpin + Send + Sync + 'static,
         ),
         Self::Error,
     > {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let name = compiled.name.clone();
         let (stdin_reader, stdin_writer) = non_blocking_pipe();
         let (stdout_reader, stdout_writer) = non_blocking_pipe();
         let (stderr_reader, stderr_writer) = non_blocking_pipe();
 
         let wasm_handle = wasm_handle(compiled, stdin_reader, stdout_writer, stderr_writer);
-        spawn_stderr(name, stderr_reader);
 
         let session = NativeSession { wasm_handle };
 
         self.sessions.lock().await.insert(id, session);
-        Ok((id, stdin_writer, stdout_reader))
+        Ok((id, stdin_writer, stdout_reader, stderr_reader))
     }
 
-    async fn terminate(self, instance_id: u64) -> () {
+    async fn terminate(&self, instance_id: u64) -> () {
         if let Some(session) = self.sessions.lock().await.remove(&instance_id) {
             // TODO: Use gas metering to force terminate the wasm runtime
             session.wasm_handle.abort();
@@ -98,35 +95,9 @@ fn wasm_handle(
     spawn_blocking(move || {
         let result = run_instance(compiled, stdin_reader, stdout_writer, stderr_writer);
         if let Err(e) = result {
-            eprintln!("Plugin execution error: {:?}", e);
+            error!("Plugin execution error: {:?}", e);
         }
     })
-}
-
-fn spawn_stderr(name: String, mut stderr_reader: NonBlockingPipeReader) {
-    spawn(async move {
-        let mut stderr = BufReader::new(&mut stderr_reader);
-        let mut buffer = String::new();
-        loop {
-            buffer.clear();
-            match stderr.read_line(&mut buffer).await {
-                Ok(0) => {
-                    break;
-                }
-                Ok(_) => {
-                    info!("[plugin] [{}] {}", name, buffer.trim_end());
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    tokio::task::yield_now().await;
-                    continue;
-                }
-                Err(e) => {
-                    error!("[WorkerBridge] Error reading from stderr: {}", e);
-                    break;
-                }
-            }
-        }
-    });
 }
 
 fn run_instance(

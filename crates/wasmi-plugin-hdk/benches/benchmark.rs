@@ -7,10 +7,8 @@ mod benchmarks {
         time::Duration,
     };
     use tokio::runtime::Builder;
-    use wasmi_plugin_hdk::{
-        plugin::{Plugin, PluginId},
-        server::HostServer,
-    };
+    use wasmi_plugin_hdk::{plugin::Plugin, plugin_id::PluginId, server::HostServer};
+    use wasmi_plugin_pdk::transport::AsyncTransport;
 
     const PLUGIN_WASM: &[u8] =
         include_bytes!("../../../target/wasm32-wasip1/release/test-plugin.wasm");
@@ -21,13 +19,14 @@ mod benchmarks {
         PLUGIN_WASM.to_vec()
     }
 
-    async fn load_plugin() -> Plugin<HostServer<(Option<PluginId>, ())>> {
+    async fn load_plugin() -> Plugin {
         let wasm_bytes = load_plugin_wasm();
         let handler = Arc::new(get_host_server());
-        let plugin = Plugin::new("test_plugin", &wasm_bytes, handler)
+        let plugin = Plugin::builder("test_plugin", wasm_bytes.clone(), handler)
+            .with_timeout(Duration::from_secs(10))
+            .build()
             .await
-            .unwrap()
-            .with_timeout(Duration::from_secs(10));
+            .unwrap();
 
         plugin
     }
@@ -62,7 +61,7 @@ mod benchmarks {
         c.bench_function("ping", |b| {
             b.iter(|| {
                 let fut = async {
-                    plugin.call("ping", Value::Null).await.unwrap();
+                    plugin.call_async("ping", Value::Null).await.unwrap();
                 };
 
                 rt.block_on(fut);
@@ -83,10 +82,13 @@ mod benchmarks {
         c.bench_function("lifecycle", |b| {
             b.iter(|| {
                 let fut = async {
-                    let plugin = Plugin::new("test_plugin", &wasm_bytes, handler.clone())
-                        .await
-                        .unwrap();
-                    plugin.call("ping", Value::Null).await.unwrap();
+                    let plugin =
+                        Plugin::builder("test_plugin", wasm_bytes.clone(), handler.clone())
+                            .with_timeout(Duration::from_secs(10))
+                            .build()
+                            .await
+                            .unwrap();
+                    plugin.call_async("ping", Value::Null).await.unwrap();
                 };
 
                 rt.block_on(fut);
@@ -106,7 +108,7 @@ mod benchmarks {
             b.iter(|| {
                 let fut = async {
                     plugin
-                        .call("prime_sieve", Value::Number(1.into()))
+                        .call_async("prime_sieve", Value::Number(1.into()))
                         .await
                         .unwrap();
                 };
@@ -127,7 +129,7 @@ mod benchmarks {
             b.iter(|| {
                 let fut = async {
                     plugin
-                        .call("prime_sieve", Value::Number(1_000_000.into()))
+                        .call_async("prime_sieve", Value::Number(1_000_000.into()))
                         .await
                         .unwrap();
                 };
@@ -148,7 +150,7 @@ mod benchmarks {
             b.iter(|| {
                 let fut = async {
                     plugin
-                        .call("call_many", Value::Number(200.into()))
+                        .call_async("call_many", Value::Number(200.into()))
                         .await
                         .unwrap();
                 };
@@ -169,7 +171,7 @@ mod benchmarks {
             b.iter(|| {
                 let fut = async {
                     plugin
-                        .call("call_many_async", Value::Number(200.into()))
+                        .call_async("call_many_async", Value::Number(200.into()))
                         .await
                         .unwrap();
                 };

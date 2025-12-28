@@ -1,92 +1,92 @@
 use futures::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, io::BufReader};
 use serde_json::Value;
 use thiserror::Error;
-use tracing::{error, info, warn};
+use tracing::{error, warn};
 use wasmi_plugin_pdk::{
     api::RequestHandler,
-    rpc_message::{RpcError, RpcErrorResponse, RpcMessage, RpcResponse},
+    rpc_message::{RpcError, RpcMessage, RpcResponse},
 };
 use wasmi_plugin_rt::yield_now;
 
-pub struct Transport<R, W, H> {
+/// A session for communicating with oneshot plugin over an async transport.
+pub struct PluginSession<R, W, H> {
     reader: BufReader<R>,
     writer: W,
     handler: H,
 }
 
 #[derive(Debug, Error)]
-pub enum TransportError {
+pub enum PluginSessionError {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
-
     #[error("Serde error: {0}, data: {1}")]
     Serde(serde_json::Error, String),
-
     #[error("EOF")]
     Eof,
-
-    #[error("Error Response: {0:?}")]
-    ErrorResponse(RpcErrorResponse),
+    #[error(transparent)]
+    Rpc(RpcError),
 }
 
-impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin, H: RequestHandler<RpcError>> Transport<R, W, H> {
+impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin, H: RequestHandler<RpcError>>
+    PluginSession<R, W, H>
+{
+    /// Create a new PluginSession with the given reader, writer, and request handler.
     pub fn new(reader: R, writer: W, handler: H) -> Self {
-        Transport {
+        PluginSession {
             reader: BufReader::new(reader),
             writer,
             handler,
         }
     }
 
+    /// Calls a method asynchronously on the plugin and waits for the response.
     pub async fn call_async(
         mut self,
         method: &str,
         params: Value,
-    ) -> Result<RpcResponse, TransportError> {
+    ) -> Result<RpcResponse, PluginSessionError> {
         let id = 1;
         let request = RpcMessage::request(id, method.to_string(), params);
-        info!("Sending request: {:?}", request);
         self.write_message(request).await?;
 
         let mut line = String::new();
 
         loop {
+            line.clear();
             match self.reader.read_line(&mut line).await {
                 Ok(0) => {
                     warn!("EOF reached while reading from transport");
-                    return Err(TransportError::Eof);
+                    return Err(PluginSessionError::Eof);
                 }
                 Ok(_) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     yield_now().await;
                     continue;
                 }
-                Err(e) => return Err(TransportError::Io(e)),
+                Err(e) => return Err(PluginSessionError::Io(e)),
             }
 
             // Process complete lines
-            let msg: RpcMessage =
-                serde_json::from_str(&line).map_err(|e| TransportError::Serde(e, line.clone()))?;
-            line.clear();
+            let msg: RpcMessage = serde_json::from_str(&line)
+                .map_err(|e| PluginSessionError::Serde(e, line.clone()))?;
 
             match msg {
                 RpcMessage::RpcResponse(resp) if resp.id == id => return Ok(resp),
                 RpcMessage::RpcErrorResponse(err) if err.id == id => {
-                    return Err(TransportError::ErrorResponse(err));
+                    return Err(PluginSessionError::Rpc(err.error));
                 }
                 RpcMessage::RpcRequest(req) => {
-                    self.handle_guest_req(req.id, &req.method, req.params)
-                        .await?;
+                    self.handle_request(req.id, &req.method, req.params).await?;
                 }
                 _ => {}
             }
         }
     }
 
-    async fn write_message(&mut self, msg: RpcMessage) -> Result<(), TransportError> {
+    async fn write_message(&mut self, msg: RpcMessage) -> Result<(), PluginSessionError> {
         let msg: String = serde_json::to_string(&msg).map_err(|e| {
             error!("Serde error while serializing message: {}", e);
-            TransportError::Serde(e, "".to_string())
+            PluginSessionError::Serde(e, "".to_string())
         })?;
         let msg = format!("{}\n", msg);
         self.writer.write_all(msg.as_bytes()).await?;
@@ -95,12 +95,12 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin, H: RequestHandler<RpcError>> T
         Ok(())
     }
 
-    async fn handle_guest_req(
+    async fn handle_request(
         &mut self,
         id: u64,
         method: &str,
         params: Value,
-    ) -> Result<(), TransportError> {
+    ) -> Result<(), PluginSessionError> {
         match self.handler.handle(method, params).await {
             Ok(result) => {
                 self.write_message(RpcMessage::response(id, result)).await?;

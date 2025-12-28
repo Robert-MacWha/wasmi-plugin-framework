@@ -4,18 +4,18 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::sync::Arc;
 
-use futures::io::BufReader;
 use futures::lock::Mutex;
-use futures::{AsyncBufReadExt, AsyncRead, AsyncWrite};
+use futures::{AsyncRead, AsyncWrite};
 use thiserror::Error;
-use tracing::{error, info};
+use tracing::error;
 use wasm_bindgen::JsCast;
-use wasm_bindgen_futures::spawn_local;
 use web_sys::js_sys::WebAssembly;
 
 use crate::compile::Compiled;
 use crate::runtime::Runtime;
-use crate::runtime::non_blocking_pipe::non_blocking_pipe;
+use crate::runtime::non_blocking_pipe::{
+    NonBlockingPipeReader, NonBlockingPipeWriter, non_blocking_pipe,
+};
 use crate::wasi::wasi_ctx::{self, WasiReader};
 use crate::worker_pool::pool::{SpawnError, WorkerHandle, WorkerId, WorkerPool};
 
@@ -58,44 +58,51 @@ impl Runtime for WorkerRuntime {
             u64,
             impl AsyncWrite + Unpin + Send + Sync + 'static,
             impl AsyncRead + Unpin + Send + Sync + 'static,
+            impl AsyncRead + Unpin + Send + Sync + 'static,
         ),
         Self::Error,
     > {
         let (stdin_reader, stdin_writer) = non_blocking_pipe();
         let (stdout_reader, stdout_writer) = non_blocking_pipe();
         let (stderr_reader, stderr_writer) = non_blocking_pipe();
-        // let stderr_writer: MessageWriter = MessageWriter::new("".into());
 
-        handle_stderr(&compiled.name, stderr_reader);
-
-        let module = compiled.js_module;
-        let pool = WorkerPool::global();
-        let handle = pool.run_with(&module, move |extra| async move {
-            let res = run_instance(
-                extra,
-                &compiled.wasm_bytes,
-                stdin_reader,
-                stdout_writer,
-                stderr_writer,
-            )
-            .await;
-            if let Err(e) = res {
-                error!("Error running Wasm instance: {}", e);
-            }
-        })?;
+        let handle = wasm_handle(compiled, stdin_reader, stdout_writer, stderr_writer)?;
 
         let id = handle.id;
-        self.active_sessions.lock().await.insert(handle.id, handle);
+        self.active_sessions.lock().await.insert(id, handle);
 
-        Ok((id, stdin_writer, stdout_reader))
+        Ok((id, stdin_writer, stdout_reader, stderr_reader))
     }
 
-    async fn terminate(self, instance_id: u64) {
+    async fn terminate(&self, instance_id: u64) {
         let instance_id = instance_id as WorkerId;
         if let Some(session) = self.active_sessions.lock().await.remove(&instance_id) {
             session.terminate();
         }
     }
+}
+
+fn wasm_handle(
+    compiled: Compiled,
+    stdin_reader: NonBlockingPipeReader,
+    stdout_writer: NonBlockingPipeWriter,
+    stderr_writer: NonBlockingPipeWriter,
+) -> Result<Arc<WorkerHandle>, SpawnError> {
+    let pool = WorkerPool::global();
+    let module = compiled.js_module;
+    pool.run_with(&module, move |extra| async move {
+        let res = run_instance(
+            extra,
+            &compiled.wasm_bytes,
+            stdin_reader,
+            stdout_writer,
+            stderr_writer,
+        )
+        .await;
+        if let Err(e) = res {
+            error!("Error running Wasm instance: {}", e);
+        }
+    })
 }
 
 async fn run_instance(
@@ -105,20 +112,11 @@ async fn run_instance(
     stdout: impl Write + Send + Sync + 'static,
     stderr: impl Write + Send + Sync + 'static,
 ) -> Result<(), RunError> {
-    info!("Starting Wasm instance in WorkerRuntime");
     let mut store = wasmer::Store::default();
 
-    info!("js_module type: {:?}", js_module.js_typeof());
-    info!(
-        "is WebAssembly.Module: {:?}",
-        js_module.is_instance_of::<WebAssembly::Module>()
-    );
-    info!("Casting Wasm module");
     let js_module: WebAssembly::Module = js_module.dyn_into().unwrap();
-    info!("Creating Wasm module");
     let module = (js_module, wasm_bytes).into();
 
-    info!("Creating WASI context");
     let wasi_ctx = wasi_ctx::WasiCtx::new()
         .set_stdin(stdin)
         .set_stdout(stdout)
@@ -128,26 +126,4 @@ async fn run_instance(
     start.call(&mut store, &[])?;
 
     Ok(())
-}
-
-fn handle_stderr(name: &str, stderr: impl AsyncRead + Unpin + Send + Sync + 'static) {
-    let name = name.to_string();
-    spawn_local(async move {
-        let mut reader = BufReader::new(stderr);
-        let mut line = String::new();
-        let name = name;
-        loop {
-            match reader.read_line(&mut line).await {
-                Ok(0) => break, // EOF
-                Ok(_) => {
-                    info!("[{}] {}", name, line.trim_end());
-                    line.clear();
-                }
-                Err(e) => {
-                    error!("Error reading Wasm stderr: {}", e);
-                    break;
-                }
-            }
-        }
-    });
 }

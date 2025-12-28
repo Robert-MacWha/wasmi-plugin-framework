@@ -61,7 +61,7 @@ pub enum TransportError {
     #[error("EOF")]
     Eof,
 
-    #[error("RPC Error: {0:?}")]
+    #[error(transparent)]
     RpcError(#[from] RpcError),
 }
 
@@ -129,6 +129,11 @@ impl<R: Read, W: Write> TransportInner<R, W> {
         }
     }
 
+    /// Synchronously call a method, blocking until the response is received.
+    ///
+    /// This method takes over the current thread to drive IO until the response
+    /// is received. If responses to other requests (those made asynchronously) arrive
+    /// in the meantime, they will be processed and queued for delivery.
     fn call(&self, method: &str, params: Value) -> Result<RpcResponse, TransportError> {
         let id = self.next_id();
         let request = RpcMessage::request(id, method.to_string(), params);
@@ -137,10 +142,11 @@ impl<R: Read, W: Write> TransportInner<R, W> {
         self.pending.lock().unwrap().insert(id, res_tx);
         self.write_message(&request)?;
 
+        //? Lock reader since we'll be driving IO blockingly
         let mut reader = self.reader.lock().unwrap();
         let mut line = String::new();
 
-        // Drive IO until we get the response
+        // Drive IO until we get our response
         loop {
             let would_block = self.step(&mut reader, &mut line)?;
 
@@ -161,6 +167,11 @@ impl<R: Read, W: Write> TransportInner<R, W> {
         }
     }
 
+    /// Asynchronously call a method, returning a future that resolves
+    /// to the response.
+    ///
+    /// Multiple concurrent async calls can be made, and responses will be
+    /// matched to requests by ID.
     async fn call_async(&self, method: &str, params: Value) -> Result<RpcResponse, TransportError> {
         let id = self.next_id();
         let request = RpcMessage::request(id, method.to_string(), params);
@@ -175,8 +186,8 @@ impl<R: Read, W: Write> TransportInner<R, W> {
         Ok(res)
     }
 
-    /// Perform a single read step, processing one incoming message if available.
-    /// Returns Ok(true) if no message was available (WouldBlock) or Ok(false)
+    /// Perform a single read, processing one incoming message if available.
+    /// Returns `Ok(true)` if no message was available (WouldBlock) or `Ok(false)`
     /// if a message was processed.
     fn step(
         &self,
@@ -197,7 +208,7 @@ impl<R: Read, W: Write> TransportInner<R, W> {
         Ok(false)
     }
 
-    // TODO: Catch WouldBlock and retry later
+    // TODO: Catch WouldBlock
     pub fn write_message(&self, message: &RpcMessage) -> Result<(), TransportError> {
         let message_str = serde_json::to_string(message)?;
         let msg = format!("{}\n", message_str);
@@ -234,8 +245,12 @@ impl<R: Read, W: Write> TransportInner<R, W> {
                     .send(Err(res))
                     .map_err(|_| TransportError::OneshotSend)?;
             }
-            RpcMessage::RpcRequest(_) => {
+            RpcMessage::RpcRequest(req) => {
                 info!("Ignoring request message");
+                self.write_message(&RpcMessage::error_response(
+                    req.id,
+                    RpcError::custom("Cannot handle requests"),
+                ))?;
             }
         }
 

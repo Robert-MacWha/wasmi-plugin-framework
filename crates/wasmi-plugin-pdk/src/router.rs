@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
-use tracing::warn;
 
 use crate::rpc_message::RpcError;
 
@@ -24,6 +23,7 @@ impl<T: Send> MaybeSend for T {}
 
 type HandlerFn<S> = dyn Send + Sync + Fn(S, Value) -> BoxFuture<'static, Result<Value, RpcError>>;
 
+/// A router for JSON-RPC methods, dispatching calls to registered handler functions
 pub struct Router<S> {
     handlers: HashMap<String, Box<HandlerFn<S>>>,
 }
@@ -42,7 +42,7 @@ impl<S: Send + Sync + Clone + 'static> Router<S> {
     }
 
     /// Register a new RPC method with the router. The method is identified by the
-    /// given name, and the handler function should accept the shared state and
+    /// given name, and the handler function should accept the shared state `S` and
     /// deserialized params.
     ///
     /// Handlers should implement: `async fn handler(state: S, params: P) -> Result<R, RpcError>`
@@ -74,6 +74,9 @@ impl<S: Send + Sync + Clone + 'static> Router<S> {
         self
     }
 
+    /// Handle a request by dispatching to the appropriate registered handler.
+    ///
+    /// If no handler is found for the method, returns `Err(MethodNotFound)`.
     pub async fn handle_with_state(
         &self,
         state: S,
@@ -81,7 +84,6 @@ impl<S: Send + Sync + Clone + 'static> Router<S> {
         params: Value,
     ) -> Result<Value, RpcError> {
         let Some(handler) = self.handlers.get(method) else {
-            warn!("Method not found: {}", method);
             return Err(RpcError::MethodNotFound);
         };
         handler(state, params).await

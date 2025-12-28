@@ -5,7 +5,7 @@ use wasmi_plugin_pdk::{
     rpc_message::RpcError,
 };
 
-use crate::{host_handler::HostHandler, plugin::PluginId};
+use crate::{host_handler::HostHandler, plugin_id::PluginId};
 
 pub struct HostServer<S: Clone + Send + Sync + 'static> {
     state: S,

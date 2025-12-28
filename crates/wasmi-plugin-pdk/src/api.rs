@@ -1,9 +1,6 @@
 use serde_json::Value;
 
-use crate::{router::BoxFuture, rpc_message::RpcError};
-
-pub trait ApiError: From<RpcError> + Send + Sync {}
-impl<T> ApiError for T where T: From<RpcError> + Send + Sync {}
+use crate::router::BoxFuture;
 
 /// JSON-RPC request handler.
 ///

@@ -11,9 +11,10 @@ use crate::{
     transport::Transport,
 };
 
-/// Server is a RPC server that can handle requests by dispatching them to registered
-/// handler functions. It stores a shared state `S` that is passed into each handler.
-pub struct PluginServer {
+/// A one-shot executor for plugins. Reads the host request from stdin,
+/// dispatches it to the appropriate handler, and writes the response
+/// to stdout.
+pub struct PluginRunner {
     router: Router<Transport>,
 }
 
@@ -28,7 +29,7 @@ enum PluginServerError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
-    #[error("RPC error: {0}")]
+    #[error(transparent)]
     Rpc(#[from] RpcError),
 
     #[error("Transport error: {0}")]
@@ -36,12 +37,14 @@ enum PluginServerError {
 }
 
 #[allow(clippy::new_without_default)]
-impl PluginServer {
+impl PluginRunner {
     pub fn new() -> Self {
         let router = Router::new();
         Self { router }
     }
 
+    /// Register a RPC method handler with the runner. The handler function
+    /// will be invoked if the request matches the given method name.
     pub fn with_method<P, R, F, Fut>(mut self, name: &str, func: F) -> Self
     where
         P: DeserializeOwned + 'static,
@@ -53,6 +56,8 @@ impl PluginServer {
         self
     }
 
+    /// Run the plugin, blocking the current thread until the incoming
+    /// request has been handled.
     pub fn run(self) {
         match self.try_run() {
             Ok(()) => {}
@@ -68,7 +73,7 @@ impl PluginServer {
         let request = self.read_request()?;
         info!("PluginServer: Received request: {:?}", request);
 
-        let (transport, mut driver) = Transport::new(std::io::stdin(), std::io::stdout());
+        let (transport, driver) = Transport::new(std::io::stdin(), std::io::stdout());
         let resp = futures::executor::block_on(async {
             select! {
                 res = self.router.handle_with_state(transport, &request.method, request.params).fuse() => {
