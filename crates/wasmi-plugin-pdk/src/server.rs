@@ -31,8 +31,8 @@ enum PluginServerError {
     #[error("RPC error: {0}")]
     Rpc(#[from] RpcError),
 
-    #[error("Transport driver error: {0}")]
-    TransportDriver(#[from] crate::transport_driver::DriverError),
+    #[error("Transport error: {0}")]
+    Transport(#[from] crate::transport::TransportError),
 }
 
 #[allow(clippy::new_without_default)]

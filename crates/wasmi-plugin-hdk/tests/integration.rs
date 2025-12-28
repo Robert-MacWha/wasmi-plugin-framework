@@ -20,7 +20,7 @@ fn load_plugin_wasm() -> Vec<u8> {
     PLUGIN_WASM.to_vec()
 }
 
-async fn load_plugin() -> Plugin<HostServer<()>> {
+async fn load_plugin() -> Plugin {
     let wasm_bytes = load_plugin_wasm();
     let handler = Arc::new(get_host_server());
     let plugin = Plugin::new("test_plugin", &wasm_bytes, handler)

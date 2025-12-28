@@ -10,6 +10,7 @@ use wasmi_plugin_pdk::{
     api::RequestHandler,
     router::BoxFuture,
     rpc_message::{RpcError, RpcResponse},
+    transport::AsyncTransport,
 };
 
 use crate::compile::Compiled;
@@ -54,10 +55,10 @@ impl Display for PluginId {
 type Logger = Box<dyn Fn(&str, &str) + Send + Sync>;
 
 /// Plugin is an async-capable instance of a plugin
-pub struct Plugin<H: HostHandler> {
+pub struct Plugin {
     name: String,
     id: PluginId,
-    handler: Arc<H>,
+    handler: Arc<dyn HostHandler>,
     logger: Logger,
     compiled: Compiled,
     timeout: Duration,
@@ -76,11 +77,11 @@ pub enum PluginError {
     PluginTimeout,
 }
 
-impl<H: HostHandler> Plugin<H> {
+impl Plugin {
     pub async fn new(
         name: &str,
         wasm_bytes: &[u8],
-        handler: Arc<H>,
+        handler: Arc<dyn HostHandler>,
     ) -> Result<Self, wasmer::CompileError> {
         Ok(Plugin {
             name: name.to_string(),
@@ -124,7 +125,13 @@ impl<H: HostHandler> Plugin<H> {
     }
 }
 
-impl<H: HostHandler + 'static> Plugin<H> {
+impl AsyncTransport<PluginError> for Plugin {
+    async fn call_async(&self, method: &str, params: Value) -> Result<RpcResponse, PluginError> {
+        self.call(method, params).await
+    }
+}
+
+impl Plugin {
     pub async fn call(&self, method: &str, params: Value) -> Result<RpcResponse, PluginError> {
         let runtime = self.create_runtime();
         let (id, stdin_writer, stdout_reader) = runtime
