@@ -3,7 +3,7 @@ use std::io::{BufRead, BufReader};
 use futures::{FutureExt, select};
 use serde::{Serialize, de::DeserializeOwned};
 use thiserror::Error;
-use tracing::{error, info};
+use tracing::error;
 
 use crate::{
     router::{MaybeSend, Router},
@@ -71,7 +71,6 @@ impl PluginRunner {
     fn try_run(&self) -> Result<(), PluginServerError> {
         //? Read request
         let request = self.read_request()?;
-        info!("PluginServer: Received request: {:?}", request);
 
         let (transport, driver) = Transport::new(std::io::stdin(), std::io::stdout());
         let resp = futures::executor::block_on(async {
@@ -90,7 +89,6 @@ impl PluginRunner {
             Ok(result) => RpcMessage::response(request.id, result),
             Err(error) => RpcMessage::error_response(request.id, error),
         };
-        info!("PluginServer: Sending response: {:?}", resp);
         driver.write_message(&resp)?;
 
         Ok(())

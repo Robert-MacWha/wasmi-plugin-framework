@@ -11,7 +11,7 @@ mod benchmarks {
     use wasmi_plugin_pdk::transport::AsyncTransport;
 
     const PLUGIN_WASM: &[u8] =
-        include_bytes!("../../../target/wasm32-wasip1/release/test-plugin.wasm");
+        include_bytes!("../../../target/wasm32-wasip1/release/test-plugin-async.wasm");
 
     static INIT: Once = Once::new();
 

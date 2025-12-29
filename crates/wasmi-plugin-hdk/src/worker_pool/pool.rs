@@ -189,12 +189,6 @@ impl WorkerHandle {
         F: FnOnce(wasm_bindgen::JsValue) -> Fut + Send + 'static,
         Fut: Future<Output = ()> + 'static,
     {
-        info!("run_with: extra type = {:?}", extra.js_typeof());
-        info!(
-            "run_with: is Module = {:?}",
-            extra.is_instance_of::<web_sys::js_sys::WebAssembly::Module>()
-        );
-
         // 1. Box the function and get a raw pointer
         let box_f: Box<
             Box<dyn FnOnce(wasm_bindgen::JsValue) -> LocalBoxFuture<'static, ()> + Send>,

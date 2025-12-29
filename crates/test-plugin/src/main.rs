@@ -39,10 +39,13 @@ async fn call(transport: Transport, _: ()) -> Result<Value, RpcError> {
 }
 
 async fn call_many(transport: Transport, limit: u64) -> Result<(), RpcError> {
+    info!("call_many with limit {}", limit);
+
     let mut tasks = vec![];
-    for _ in 0..limit {
+    for i in 0..limit {
         let transport_clone = transport.clone();
         let task = async move {
+            info!("Sending ping {}", i);
             transport_clone.call("ping", Value::Null)?;
             Ok::<(), RpcError>(())
         };
@@ -88,7 +91,6 @@ async fn call_many_async(transport: Transport, limit: u64) -> Result<(), RpcErro
 async fn prime_sieve(_transport: Transport, limit: u64) -> Result<Value, RpcError> {
     let limit = limit as usize;
     let primes = sieve_of_eratosthenes(limit);
-    info!("Generated {} primes up to {}", primes.len(), limit);
     Ok(serde_json::json!({
         "count": primes.len(),
         "limit": limit
@@ -124,7 +126,6 @@ fn main() {
         .without_time()
         .init();
     info!("Starting plugin...");
-    info!("Test");
 
     PluginRunner::new()
         .with_method("ping", ping)

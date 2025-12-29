@@ -1,4 +1,7 @@
-use std::io::{BufReader, Read, Write};
+use std::{
+    io::{BufReader, Read, Write},
+    u32,
+};
 use thiserror::Error;
 use tracing::{error, info, trace, warn};
 use wasmer::{FunctionEnvMut, RuntimeError};
@@ -30,7 +33,21 @@ pub struct WasiCtx {
     stdout_writer: Option<Box<dyn Write + Send + Sync>>,
     stderr_writer: Option<Box<dyn Write + Send + Sync>>,
 
+    pub asyncify_state: AsyncifyState,
+    pub asyncify_start_unwind_fn: Option<wasmer::Function>,
+    pub asyncify_stop_unwind_fn: Option<wasmer::Function>,
+    pub asyncify_start_rewind_fn: Option<wasmer::Function>,
+    pub asyncify_stop_rewind_fn: Option<wasmer::Function>,
+    /// Address of the asyncify data region in guest memory.
+    pub asyncify_data_addr: u32,
     memory: Option<wasmer::Memory>,
+}
+
+#[derive(PartialEq, Copy, Clone)]
+pub enum AsyncifyState {
+    Normal,
+    Unwinding,
+    Rewinding,
 }
 
 #[derive(Debug, Error)]
@@ -39,6 +56,12 @@ pub enum WasiError {
     InstantiationError(#[from] wasmer::InstantiationError),
     #[error("Export Error: {0}")]
     ExportError(#[from] wasmer::ExportError),
+    #[error("Memory Error: {0}")]
+    MemoryError(#[from] wasmer::MemoryError),
+    #[error("Memory Access Error: {0}")]
+    MemoryAccessError(#[from] wasmer::MemoryAccessError),
+    #[error("Runtime Error: {0}")]
+    RuntimeError(#[from] RuntimeError),
 }
 
 impl Default for WasiCtx {
@@ -55,6 +78,12 @@ impl WasiCtx {
             stdin_reader: None,
             stdout_writer: None,
             stderr_writer: None,
+            asyncify_state: AsyncifyState::Normal,
+            asyncify_start_unwind_fn: None,
+            asyncify_stop_unwind_fn: None,
+            asyncify_start_rewind_fn: None,
+            asyncify_stop_rewind_fn: None,
+            asyncify_data_addr: u32::MAX, // Invalid address, so will runtime error if used before setup
             memory: None,
         }
     }
@@ -87,21 +116,50 @@ impl WasiCtx {
         self
     }
 
-    #[allow(clippy::result_large_err)]
     pub fn into_fn(
         self,
         mut store: &mut wasmer::Store,
         module: &wasmer::Module,
-    ) -> Result<wasmer::Function, WasiError> {
+    ) -> Result<(wasmer::Function, wasmer::FunctionEnv<WasiCtx>), WasiError> {
         let (ctx, imports) = self.get_imports(store);
 
         let instance = wasmer::Instance::new(&mut store, module, &imports)?;
         let memory = instance.exports.get_memory("memory")?;
-        ctx.as_mut(&mut store).set_memory(memory.clone());
+
+        //? Get asyncify data region info from guest
+        let get_ptr_fn = instance.exports.get_function("get_asyncify_ptr")?;
+        let get_len_fn = instance.exports.get_function("get_asyncify_len")?;
+
+        let data_addr = get_ptr_fn.call(&mut store, &[])?[0].unwrap_i32() as u32;
+        let data_len = get_len_fn.call(&mut store, &[])?[0].unwrap_i32() as u32;
+
+        //? Write asyncify header
+        {
+            let view = memory.view(&store);
+            let stack_start = data_addr + 8;
+            let stack_end = data_addr + data_len;
+
+            // Offset 0: stack start, Offset 4: stack end
+            view.write(data_addr as u64, &stack_start.to_le_bytes())?;
+            view.write((data_addr + 4) as u64, &stack_end.to_le_bytes())?;
+        }
+
+        ctx.as_mut(&mut store).memory = Some(memory.clone());
+        ctx.as_mut(&mut store).asyncify_data_addr = data_addr;
+
+        let asyncify_start_unwind_fn = instance.exports.get_function("asyncify_start_unwind")?;
+        let asyncify_stop_unwind_fn = instance.exports.get_function("asyncify_stop_unwind")?;
+        let asyncify_start_rewind_fn = instance.exports.get_function("asyncify_start_rewind")?;
+        let asyncify_stop_rewind_fn = instance.exports.get_function("asyncify_stop_rewind")?;
+
+        ctx.as_mut(&mut store).asyncify_start_rewind_fn = Some(asyncify_start_rewind_fn.clone());
+        ctx.as_mut(&mut store).asyncify_stop_rewind_fn = Some(asyncify_stop_rewind_fn.clone());
+        ctx.as_mut(&mut store).asyncify_start_unwind_fn = Some(asyncify_start_unwind_fn.clone());
+        ctx.as_mut(&mut store).asyncify_stop_unwind_fn = Some(asyncify_stop_unwind_fn.clone());
 
         let start_fn = instance.exports.get_function("_start")?;
 
-        Ok(start_fn.clone())
+        Ok((start_fn.clone(), ctx))
     }
 
     pub fn get_imports(
@@ -129,10 +187,6 @@ impl WasiCtx {
         };
 
         (ctx, imports)
-    }
-
-    pub fn set_memory(&mut self, memory: wasmer::Memory) {
-        self.memory = Some(memory);
     }
 }
 
@@ -257,8 +311,17 @@ pub fn fd_read(
         return Errno::Badf as i32;
     }
 
-    let (ctx, store) = env.data_and_store_mut();
+    let (ctx, mut store) = env.data_and_store_mut();
     let memory = ctx.memory.as_ref().expect("Memory not initialized");
+
+    if ctx.asyncify_state == AsyncifyState::Rewinding {
+        let stop_rewind = ctx.asyncify_stop_rewind_fn.as_ref().unwrap().clone();
+        ctx.asyncify_state = AsyncifyState::Normal;
+        stop_rewind.call(&mut store, &[]).unwrap();
+
+        //? After rewinding return Again to indicate the read should be retried
+        return Errno::Again as i32;
+    }
     let view = memory.view(&store);
 
     let mut total_read = 0u64;
@@ -282,9 +345,13 @@ pub fn fd_read(
                 Some(r) => match r.read(&mut host_buf) {
                     Ok(n) => n,
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        // trace!("fd_read: WouldBlock, yielding to host");
-                        // ctx.awaiting_stdin = true;
-                        // let _ = sched_yield(caller);
+                        // Unwind via asyncify here
+                        trace!("fd_read would block, unwinding stack for async operation...");
+                        ctx.asyncify_state = AsyncifyState::Unwinding;
+                        let start_unwind = ctx.asyncify_start_unwind_fn.as_ref().unwrap().clone();
+                        let ptr = ctx.asyncify_data_addr;
+                        start_unwind.call(&mut store, &[ptr.into()]).unwrap();
+
                         return Errno::Again as i32;
                     }
                     Err(_) => return Errno::Fault as i32,

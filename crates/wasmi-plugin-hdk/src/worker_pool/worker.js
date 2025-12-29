@@ -1,15 +1,15 @@
 // Forwards JS and WASM logs to the main thread
 // Very slow, so disabled unless required for debugging
-// ["log", "info", "warn", "error"].forEach(level => {
-//     globalThis.console[level] = (...args) => {
-//         globalThis.postMessage({
-//             type: "Log",
-//             level: level,
-//             message: args.map(String).join(" "),
-//             ts: globalThis.performance.now()
-//         });
-//     };
-// });
+["log", "info", "warn", "error"].forEach(level => {
+    globalThis.console[level] = (...args) => {
+        globalThis.postMessage({
+            type: "Log",
+            level: level,
+            message: args.map(String).join(" "),
+            ts: globalThis.performance.now()
+        });
+    };
+});
 
 console.log("Worker started");
 let wasmPkg = null;

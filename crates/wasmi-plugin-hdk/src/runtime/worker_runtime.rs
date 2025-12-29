@@ -7,8 +7,9 @@ use std::sync::Arc;
 use futures::lock::Mutex;
 use futures::{AsyncRead, AsyncWrite};
 use thiserror::Error;
-use tracing::error;
+use tracing::{error, info, warn};
 use wasm_bindgen::JsCast;
+use wasmi_plugin_rt::yield_now;
 use web_sys::js_sys::WebAssembly;
 
 use crate::compile::Compiled;
@@ -105,6 +106,9 @@ fn wasm_handle(
     })
 }
 
+/// Run a Wasm instance with WASI and asyncify support.
+///
+/// https://kripken.github.io/blog/wasm/2019/07/16/asyncify.html
 async fn run_instance(
     js_module: wasm_bindgen::JsValue,
     wasm_bytes: &[u8],
@@ -122,8 +126,49 @@ async fn run_instance(
         .set_stdout(stdout)
         .set_stderr(stderr);
 
-    let start = wasi_ctx.into_fn(&mut store, &module)?;
-    start.call(&mut store, &[])?;
+    info!("Starting Wasm instance");
+    let (start, ctx) = wasi_ctx.into_fn(&mut store, &module)?;
+    let mut unwind_count = 0;
+    loop {
+        start.call(&mut store, &[])?;
+
+        match ctx.as_ref(&store).asyncify_state {
+            wasi_ctx::AsyncifyState::Unwinding => {
+                // Unwind
+                let stop_unwind = ctx
+                    .as_mut(&mut store)
+                    .asyncify_stop_unwind_fn
+                    .as_ref()
+                    .unwrap()
+                    .clone();
+                stop_unwind.call(&mut store, &[])?;
+
+                // Yield to JS
+                unwind_count += 1;
+                yield_now().await;
+
+                // Rewind
+                ctx.as_mut(&mut store).asyncify_state = wasi_ctx::AsyncifyState::Rewinding;
+                let start_rewind = ctx
+                    .as_mut(&mut store)
+                    .asyncify_start_rewind_fn
+                    .as_ref()
+                    .unwrap()
+                    .clone();
+                let addr = ctx.as_ref(&store).asyncify_data_addr;
+                start_rewind.call(&mut store, &[addr.into()])?;
+            }
+            wasi_ctx::AsyncifyState::Normal => {
+                break;
+            }
+            wasi_ctx::AsyncifyState::Rewinding => {
+                warn!("wasi_ctx is unexpectedly Rewinding");
+                break;
+            }
+        }
+    }
+
+    info!("Wasm instance exited after {} unwinds", unwind_count);
 
     Ok(())
 }

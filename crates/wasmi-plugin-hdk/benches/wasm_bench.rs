@@ -11,7 +11,8 @@ use wasmi_plugin_pdk::transport::AsyncTransport;
 
 wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
-const PLUGIN_WASM: &[u8] = include_bytes!("../../../target/wasm32-wasip1/release/test-plugin.wasm");
+const PLUGIN_WASM: &[u8] =
+    include_bytes!("../../../target/wasm32-wasip1/release/test-plugin-async.wasm");
 
 static INIT: Once = Once::new();
 
@@ -22,7 +23,7 @@ fn load_plugin_wasm() -> Vec<u8> {
 async fn load_plugin() -> Plugin {
     let wasm_bytes = load_plugin_wasm();
     let handler = Arc::new(get_host_server());
-    let plugin = Plugin::new("test_plugin", wasm_bytes, handler)
+    let plugin = Plugin::builder("test_plugin", wasm_bytes, handler)
         .with_timeout(Duration::from_secs(10))
         .build()
         .await
@@ -87,7 +88,7 @@ async fn bench_lifecycle(c: &mut Criterion) {
             let wasm_bytes = wasm_bytes.clone();
             let handler = handler.clone();
             async move {
-                let plugin = Plugin::new("test_plugin", wasm_bytes.clone(), handler)
+                let plugin = Plugin::builder("test_plugin", wasm_bytes.clone(), handler)
                     .build()
                     .await
                     .unwrap();

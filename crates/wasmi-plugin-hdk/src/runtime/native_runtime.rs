@@ -116,7 +116,7 @@ fn run_instance(
         .set_stdout(stdout)
         .set_stderr(stderr);
 
-    let start = wasi_ctx.into_fn(&mut store, &module)?;
+    let (start, _ctx) = wasi_ctx.into_fn(&mut store, &module)?;
     start.call(&mut store, &[])?;
 
     Ok(())
