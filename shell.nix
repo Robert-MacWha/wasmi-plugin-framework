@@ -15,7 +15,7 @@ in
 pkgs.mkShell {
   packages = with pkgs; [
     rustToolchain
-rust-analyzer
+    rust-analyzer
     cargo-sort
     cargo-machete
     samply
