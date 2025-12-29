@@ -2351,6 +2351,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "wasmi-plugin-coordinator"
+version = "0.1.0"
+dependencies = [
+ "gloo-timers",
+ "tokio",
+]
+
+[[package]]
 name = "wasmi-plugin-hdk"
 version = "0.1.0"
 dependencies = [
