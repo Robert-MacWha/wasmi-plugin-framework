@@ -52,14 +52,20 @@ impl PluginLogger for DefaultPluginLogger {}
 
 #[derive(Debug, Error)]
 pub enum PluginError {
-    #[error("Transport error")]
-    TransportError(#[from] PluginSessionError),
-    #[error("Bridge Error")]
-    BridgeError(#[from] Box<dyn std::error::Error>),
+    #[error("Session error")]
+    SessionError(#[from] PluginSessionError),
+    #[error("Runtime Error")]
+    RuntimeError(#[from] Box<dyn std::error::Error>),
     #[error("Plugin timeout")]
     PluginTimeout,
     #[error("Plugin compilation error")]
     CompileError(#[from] wasmer::CompileError),
+}
+
+impl From<PluginError> for RpcError {
+    fn from(value: PluginError) -> Self {
+        RpcError::custom(value.to_string())
+    }
 }
 
 impl Plugin {
@@ -128,7 +134,7 @@ impl AsyncTransport<PluginError> for Plugin {
         let (id, stdin_writer, stdout_reader, stderr_reader) = runtime
             .spawn(self.inner.compiled.clone())
             .await
-            .map_err(|e| PluginError::BridgeError(e.into()))?;
+            .map_err(|e| PluginError::RuntimeError(e.into()))?;
 
         //? stderr logging
         let name = self.inner.compiled.name.clone();

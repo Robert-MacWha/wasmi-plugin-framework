@@ -52,7 +52,15 @@ pub enum RpcError {
 }
 
 pub trait RpcErrorContext<T> {
-    fn context(self, msg: &str) -> Result<T, RpcError>;
+    fn context(self, msg: impl Into<String>) -> Result<T, RpcError>;
+    fn with_context<F, S>(self, f: F) -> Result<T, RpcError>
+    where
+        F: FnOnce() -> S,
+        S: Into<String>;
+}
+
+pub trait ToRpcResult<T> {
+    fn rpc_err(self) -> Result<T, RpcError>;
 }
 
 impl RpcMessage {
@@ -113,13 +121,38 @@ impl From<Box<dyn std::error::Error + Send + Sync>> for RpcError {
 }
 
 impl<T, E: std::fmt::Display> RpcErrorContext<T> for Result<T, E> {
-    fn context(self, msg: &str) -> Result<T, RpcError> {
-        self.map_err(|e| RpcError::Custom(format!("{}: {}", msg, e)))
+    fn context(self, msg: impl Into<String>) -> Result<T, RpcError> {
+        self.map_err(|e| RpcError::Custom(format!("{}: {}", msg.into(), e)))
+    }
+
+    fn with_context<F, S>(self, f: F) -> Result<T, RpcError>
+    where
+        F: FnOnce() -> S,
+        S: Into<String>,
+    {
+        self.map_err(|e| RpcError::Custom(format!("{}: {}", f().into(), e)))
     }
 }
 
 impl<T> RpcErrorContext<T> for Option<T> {
-    fn context(self, msg: &str) -> Result<T, RpcError> {
-        self.ok_or_else(|| RpcError::Custom(msg.to_string()))
+    fn context(self, msg: impl Into<String>) -> Result<T, RpcError> {
+        self.ok_or_else(|| RpcError::Custom(msg.into()))
+    }
+
+    fn with_context<F, S>(self, f: F) -> Result<T, RpcError>
+    where
+        F: FnOnce() -> S,
+        S: Into<String>,
+    {
+        self.ok_or_else(|| RpcError::Custom(f().into()))
+    }
+}
+
+impl<T, E> ToRpcResult<T> for Result<T, E>
+where
+    E: std::error::Error + Send + Sync + 'static,
+{
+    fn rpc_err(self) -> Result<T, RpcError> {
+        self.map_err(|e| RpcError::from(Box::new(e) as Box<dyn std::error::Error + Send + Sync>))
     }
 }
