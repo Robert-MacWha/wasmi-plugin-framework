@@ -218,7 +218,10 @@ fn stdout_proxy(reader: impl AsyncRead + Unpin + 'static, id: InstanceId) {
                     let msg_value = serde_wasm_bindgen::to_value(&stdout_msg).unwrap();
                     Reflect::set(&msg_value, &"data".into(), &data).unwrap();
                     let global = js_sys::global().unchecked_into::<DedicatedWorkerGlobalScope>();
-                    global.post_message(&msg_value).unwrap();
+                    let transfer_list = js_sys::Array::of1(&data.buffer());
+                    global
+                        .post_message_with_transfer(&msg_value, &transfer_list)
+                        .unwrap();
                 }
                 Err(e) => {
                     error!("Error reading stdout for instance {}: {}", id, e);
@@ -240,13 +243,16 @@ fn stderr_proxy(reader: impl AsyncRead + Unpin + 'static, id: InstanceId) {
                 return;
             }
 
-            let js_data = js_sys::Uint8Array::from(data);
+            let data = js_sys::Uint8Array::from(data);
             let stderr_msg = CoordinatorMessage::Stderr { id: id.clone() };
             let msg_value = serde_wasm_bindgen::to_value(&stderr_msg).unwrap();
+            js_sys::Reflect::set(&msg_value, &"data".into(), &data).unwrap();
 
-            js_sys::Reflect::set(&msg_value, &"data".into(), &js_data).unwrap();
+            let transfer_list = js_sys::Array::of1(&data.buffer());
             let global = js_sys::global().unchecked_into::<DedicatedWorkerGlobalScope>();
-            global.post_message(&msg_value).unwrap();
+            global
+                .post_message_with_transfer(&msg_value, &transfer_list)
+                .unwrap();
         };
 
         loop {

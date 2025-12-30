@@ -148,7 +148,6 @@ impl Runtime for &WorkerRuntime {
 
         // Notify the coordinator
         let wasm_bytes_js = js_sys::Uint8Array::from(&compiled.wasm_bytes[..]);
-        let wasm_bytes_buffer = wasm_bytes_js.buffer();
         let wasm_module_js = compiled.js_module.clone();
         let spawn_msg = CoordinatorMessage::RunPlugin { id: instance_id };
         let msg_value = serde_wasm_bindgen::to_value(&spawn_msg)?;
@@ -156,14 +155,13 @@ impl Runtime for &WorkerRuntime {
             .map_err(SpawnError::Reflect)?;
         Reflect::set(&msg_value, &"wasm_module".into(), &wasm_module_js)
             .map_err(SpawnError::Reflect)?;
-        let transfer = js_sys::Array::new();
-        transfer.push(&wasm_bytes_buffer);
+        let transfer_list = js_sys::Array::of1(&wasm_bytes_js.buffer());
 
         self.inner
             .lock()
             .unwrap()
             .coordinator
-            .post_message_with_transfer(&msg_value, &transfer)
+            .post_message_with_transfer(&msg_value, &transfer_list)
             .map_err(SpawnError::PostMessage)?;
 
         // Await the response
@@ -317,9 +315,13 @@ fn stdin_proxy(
                     let stdin_msg = CoordinatorMessage::Stdin { id };
                     let msg_value = serde_wasm_bindgen::to_value(&stdin_msg).unwrap();
                     Reflect::set(&msg_value, &"data".into(), &data).unwrap();
+                    let transfer_list = js_sys::Array::of1(&data.buffer());
 
                     let inner = inner.lock().unwrap();
-                    if let Err(e) = inner.coordinator.post_message(&msg_value) {
+                    if let Err(e) = inner
+                        .coordinator
+                        .post_message_with_transfer(&msg_value, &transfer_list)
+                    {
                         error!("Failed to post stdin message: {:?}", e);
                         break;
                     }
