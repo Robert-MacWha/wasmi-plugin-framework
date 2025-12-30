@@ -6,7 +6,7 @@ use tracing_subscriber::fmt;
 use wasmi_plugin_pdk::{
     rpc_message::{RpcError, RpcErrorContext},
     runner::PluginRunner,
-    transport::{AsyncTransport, SyncTransport, Transport},
+    transport::{AsyncTransport, SyncManyTransport, SyncTransport, Transport},
 };
 
 async fn ping(_: Transport, _: ()) -> Result<Value, RpcError> {
@@ -39,22 +39,12 @@ async fn call(transport: Transport, _: ()) -> Result<Value, RpcError> {
 }
 
 async fn call_many(transport: Transport, limit: u64) -> Result<(), RpcError> {
-    let mut tasks = vec![];
+    let mut calls = Vec::new();
     for _ in 0..limit {
-        let transport_clone = transport.clone();
-        let task = async move {
-            transport_clone.call("ping", Value::Null)?;
-            Ok::<(), RpcError>(())
-        };
-        tasks.push(task);
+        calls.push(("ping", Value::Null));
     }
 
-    let resps: Vec<Result<(), RpcError>> =
-        futures::future::join_all(tasks).await.into_iter().collect();
-
-    for resp in resps {
-        resp?;
-    }
+    transport.call_many(calls)?;
 
     Ok(())
 }

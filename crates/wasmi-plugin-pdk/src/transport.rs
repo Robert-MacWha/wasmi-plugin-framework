@@ -20,6 +20,10 @@ pub trait SyncTransport<E>: Send + Sync + 'static {
     fn call(&self, method: &str, params: Value) -> Result<RpcResponse, E>;
 }
 
+pub trait SyncManyTransport<E>: Send + Sync + 'static {
+    fn call_many(&self, calls: Vec<(&str, Value)>) -> Result<Vec<RpcResponse>, E>;
+}
+
 pub trait AsyncTransport<E>: Send + Sync + 'static {
     fn call_async(
         &self,
@@ -106,6 +110,12 @@ impl SyncTransport<TransportError> for Transport {
     }
 }
 
+impl SyncManyTransport<TransportError> for Transport {
+    fn call_many(&self, calls: Vec<(&str, Value)>) -> Result<Vec<RpcResponse>, TransportError> {
+        self.inner.call_many(calls)
+    }
+}
+
 impl AsyncTransport<TransportError> for Transport {
     async fn call_async(&self, method: &str, params: Value) -> Result<RpcResponse, TransportError> {
         self.inner.call_async(method, params).await
@@ -138,36 +148,61 @@ impl<R: Read, W: Write> TransportInner<R, W> {
     /// is received. If responses to other requests (those made asynchronously) arrive
     /// in the meantime, they will be processed and queued for delivery.
     fn call(&self, method: &str, params: Value) -> Result<RpcResponse, TransportError> {
-        let id = self.next_id();
-        let request = RpcMessage::request(id, method.to_string(), params);
+        let calls = vec![(method, params)];
+        let mut results = self.call_many(calls)?;
+        Ok(results.remove(0))
+    }
 
-        let (res_tx, mut res_rx) = oneshot::channel();
-        self.pending.lock().unwrap().insert(id, res_tx);
-        self.write_message(&request)?;
+    fn call_many(&self, calls: Vec<(&str, Value)>) -> Result<Vec<RpcResponse>, TransportError> {
+        let mut res_rx_list: Vec<oneshot::Receiver<_>> = calls
+            .into_iter()
+            .map(|(method, params)| {
+                let id = self.next_id();
+
+                let (res_tx, res_rx) = oneshot::channel();
+                self.pending.lock().unwrap().insert(id, res_tx);
+                self.write_message(&RpcMessage::request(id, method.to_string(), params))?;
+                Ok(res_rx)
+            })
+            .collect::<Result<_, TransportError>>()?;
 
         //? Lock reader since we'll be driving IO blockingly
+        let mut results = Vec::new();
         let mut reader = self.reader.lock().unwrap();
         let mut line = String::new();
 
         // Drive IO until we get our response
-        loop {
+        while results.len() < res_rx_list.len() + results.len() {
             let would_block = self.step(&mut reader, &mut line)?;
 
-            match res_rx.try_recv() {
+            // Poll and remove finished receivers
+            let mut err = None;
+            res_rx_list.retain_mut(|rx| match rx.try_recv() {
                 Ok(Some(res)) => {
-                    let res = res.map_err(|e| TransportError::RpcError(e.error))?;
-                    return Ok(res);
+                    results.push(res.map_err(|e| TransportError::RpcError(e.error)));
+                    false // Remove from list
                 }
-                Ok(None) => {
-                    if would_block {
-                        wait_for_stdin();
-                    }
-                }
+                Ok(None) => true, // Keep in list
                 Err(e) => {
-                    return Err(TransportError::OneshotCanceled(e));
+                    err = Some(TransportError::OneshotCanceled(e));
+                    false // Remove from list
                 }
+            });
+
+            if let Some(e) = err {
+                return Err(e);
+            }
+            if would_block && !res_rx_list.is_empty() {
+                wait_for_stdin();
+            }
+            if res_rx_list.is_empty() {
+                break;
             }
         }
+
+        let mut results: Vec<_> = results.into_iter().collect::<Result<_, _>>()?;
+        results.sort_by_key(|res| res.id);
+        Ok(results)
     }
 
     /// Asynchronously call a method, returning a future that resolves
