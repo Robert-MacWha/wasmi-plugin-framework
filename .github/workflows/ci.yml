@@ -18,6 +18,8 @@ jobs:
       uses: DeterminateSystems/nix-installer-action@v14
     - name: Magic Nix Cache
       uses: DeterminateSystems/magic-nix-cache-action@v8
+    - name: Rust Cache
+      uses: Swatinem/rust-cache@v2
 
     - run: nix-shell --run "make test-native"
     - run: nix-shell --run "make bench-native"
@@ -30,6 +32,8 @@ jobs:
       uses: DeterminateSystems/nix-installer-action@v14
     - name: Magic Nix Cache
       uses: DeterminateSystems/magic-nix-cache-action@v8
+    - name: Rust Cache
+      uses: Swatinem/rust-cache@v2
 
     - run: nix-shell --run "make test-wasm"
     - run: nix-shell --run "make bench-wasm"
@@ -42,6 +46,8 @@ jobs:
       uses: DeterminateSystems/nix-installer-action@v14
     - name: Magic Nix Cache
       uses: DeterminateSystems/magic-nix-cache-action@v8
+    - name: Rust Cache
+      uses: Swatinem/rust-cache@v2
 
     - run: nix-shell --run "make clippy-native"
     - run: nix-shell --run "make clippy-wasm"
