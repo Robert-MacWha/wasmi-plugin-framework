@@ -6,6 +6,8 @@
 //     self.postMessage({ type: 'Log', message: `${args.join(' ')}` });
 // };
 
+self.name = "coordinator";
+
 import init, { start_coordinator } from "{sdk_url}";
 
 init('{wasm_url}').then(() => {

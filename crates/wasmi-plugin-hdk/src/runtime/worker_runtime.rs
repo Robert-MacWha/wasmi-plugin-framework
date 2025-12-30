@@ -209,8 +209,9 @@ fn worker_url() -> Result<String, JsValue> {
 
     let options = web_sys::BlobPropertyBag::new();
     options.set_type("text/javascript");
+    let sdk_script = format!("{}\n//# sourceURL=coordinator.js", WORKER_JS_GLUE);
     let sdk_blob = web_sys::Blob::new_with_u8_array_sequence_and_options(
-        &js_sys::Array::of1(&js_sys::JsString::from(WORKER_JS_GLUE)),
+        &js_sys::Array::of1(&js_sys::JsString::from(sdk_script)),
         &options,
     )?;
     let sdk_url = web_sys::Url::create_object_url_with_blob(&sdk_blob)?;
@@ -274,7 +275,11 @@ fn on_message(inner: Arc<Mutex<InnerWorkerRuntime>>, e: web_sys::MessageEvent) {
                     error!("Failed to write to stderr pipe: {}", e);
                 }
             } else {
-                warn!("Received stderr for unknown instance ID {:?}", id);
+                warn!(
+                    "Received stderr for unknown instance ID {:?}: {}",
+                    id,
+                    String::from_utf8_lossy(&data)
+                );
             }
         }
         CoordinatorMessage::RunPluginResp { id, status } => {

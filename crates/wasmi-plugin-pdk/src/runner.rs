@@ -80,7 +80,10 @@ impl PluginRunner {
                     res
                 },
                 drive_err = driver.run().fuse() => {
-                    panic!("Transport driver exited unexpectedly: {:?}", drive_err);
+                    match drive_err {
+                        Ok(_) => Err(RpcError::custom("Transport driver exited unexpectedly")),
+                        Err(e) => Err(e.into()),
+                    }
                 }
             }
         });

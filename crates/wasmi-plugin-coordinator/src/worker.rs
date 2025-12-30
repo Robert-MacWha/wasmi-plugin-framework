@@ -1,7 +1,8 @@
 use std::{cell::RefCell, collections::HashMap, io::Write, rc::Rc, sync::Arc};
 
+use futures::AsyncBufReadExt;
 use futures::AsyncRead;
-use futures::AsyncReadExt;
+use futures::io::BufReader;
 use thiserror::Error;
 use tracing::{error, info, warn};
 use wasm_bindgen::{
@@ -30,10 +31,12 @@ struct CoordinatorState {
 enum RunError {
     #[error("WASI Error: {0}")]
     Wasi(#[from] wasi_ctx::WasiError),
-    #[error("Wasmer Runtime Error: {0}")]
-    Runtime(#[from] wasmer::RuntimeError),
     #[error("Compile Error: {0}")]
     Compile(#[from] wasmer::CompileError),
+    #[error("Wasmer Runtime Error: {0}")]
+    Runtime(#[from] wasmer::RuntimeError),
+    #[error("Wasmer Trap Error: {0}")]
+    Trap(String),
 }
 
 #[wasm_bindgen]
@@ -126,7 +129,6 @@ fn on_message(state: &mut CoordinatorState, e: web_sys::MessageEvent) {
 }
 
 fn stdin(state: &mut CoordinatorState, id: InstanceId, data: Uint8Array) {
-    info!("Received stdin message for id {}", id);
     let data: Vec<u8> = data.to_vec();
 
     if let Some(writer) = state.instance_channels.get_mut(&id) {
@@ -168,22 +170,20 @@ fn run_plugin(
 
     let pool = WorkerPool::global();
     pool.run_with(&wasm_module, move |extra| async move {
-        info!("Running Wasm instance for id {}", id);
         let res = run_instance(
             extra,
             wasm_bytes,
             stdin_reader,
             stdout_writer,
             stderr_writer,
-        )
-        .await;
+        );
         if let Err(e) = res {
             error!("Error running Wasm instance: {}", e);
         }
     })
 }
 
-async fn run_instance(
+fn run_instance(
     js_module: wasm_bindgen::JsValue,
     wasm_bytes: Vec<u8>,
     stdin: impl WasiReader + 'static,
@@ -200,27 +200,36 @@ async fn run_instance(
         .set_stdout(stdout)
         .set_stderr(stderr);
 
-    info!("Starting WASI instance...");
     let start = wasi_ctx.into_fn(&mut store, &module)?;
-    start.call(&mut store, &[])?;
-
-    Ok(())
+    match start.call(&mut store, &[]) {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            if let Some(trap) = e.clone().to_trap() {
+                Err(RunError::Trap(trap.message().to_string()))
+            } else {
+                Err(RunError::Runtime(e))
+            }
+        }
+    }
 }
 
 fn stdout_proxy(reader: impl AsyncRead + Unpin + 'static, id: InstanceId) {
     wasm_bindgen_futures::spawn_local(async move {
-        let mut reader = reader;
-        let mut buffer = [0u8; 1024];
+        let mut reader = BufReader::new(reader);
+        let mut line = String::new();
 
         loop {
-            match reader.read(&mut buffer).await {
+            line.clear();
+            match reader.read_line(&mut line).await {
                 Ok(0) => break, // EOF
-                Ok(n) => {
-                    let data = js_sys::Uint8Array::from(&buffer[..n]);
+                Ok(_) => {
+                    let global = js_sys::global().unchecked_into::<DedicatedWorkerGlobalScope>();
+
+                    let data = js_sys::Uint8Array::from(line.as_bytes());
                     let stdout_msg = CoordinatorMessage::Stdout { id: id.clone() };
                     let msg_value = serde_wasm_bindgen::to_value(&stdout_msg).unwrap();
                     Reflect::set(&msg_value, &"data".into(), &data).unwrap();
-                    let global = js_sys::global().unchecked_into::<DedicatedWorkerGlobalScope>();
+
                     let transfer_list = js_sys::Array::of1(&data.buffer());
                     global
                         .post_message_with_transfer(&msg_value, &transfer_list)
@@ -237,46 +246,28 @@ fn stdout_proxy(reader: impl AsyncRead + Unpin + 'static, id: InstanceId) {
 
 fn stderr_proxy(reader: impl AsyncRead + Unpin + 'static, id: InstanceId) {
     wasm_bindgen_futures::spawn_local(async move {
-        let mut reader = reader;
-        let mut chunk_buffer = [0u8; 1024];
-        let mut accumulated_data = Vec::with_capacity(1024);
-
-        let send_buffer = |data: &[u8]| {
-            if data.is_empty() {
-                return;
-            }
-
-            let data = js_sys::Uint8Array::from(data);
-            let stderr_msg = CoordinatorMessage::Stderr { id: id.clone() };
-            let msg_value = serde_wasm_bindgen::to_value(&stderr_msg).unwrap();
-            js_sys::Reflect::set(&msg_value, &"data".into(), &data).unwrap();
-
-            let transfer_list = js_sys::Array::of1(&data.buffer());
-            let global = js_sys::global().unchecked_into::<DedicatedWorkerGlobalScope>();
-            global
-                .post_message_with_transfer(&msg_value, &transfer_list)
-                .unwrap();
-        };
+        let mut reader = BufReader::new(reader);
+        let mut line = String::new();
 
         loop {
-            match reader.read(&mut chunk_buffer).await {
-                Ok(0) => {
-                    // EOF: Send any remaining data in the buffer
-                    send_buffer(&accumulated_data);
-                    break;
-                }
-                Ok(n) => {
-                    accumulated_data.extend_from_slice(&chunk_buffer[..n]);
+            line.clear();
+            match reader.read_line(&mut line).await {
+                Ok(0) => break, // EOF
+                Ok(_) => {
+                    let global = js_sys::global().unchecked_into::<DedicatedWorkerGlobalScope>();
 
-                    // If we've hit or exceeded 1 KiB, send it and clear
-                    if accumulated_data.len() >= 1024 {
-                        send_buffer(&accumulated_data);
-                        accumulated_data.clear();
-                    }
+                    let data = js_sys::Uint8Array::from(line.as_bytes());
+                    let stdout_msg = CoordinatorMessage::Stderr { id: id.clone() };
+                    let msg_value = serde_wasm_bindgen::to_value(&stdout_msg).unwrap();
+                    Reflect::set(&msg_value, &"data".into(), &data).unwrap();
+
+                    let transfer_list = js_sys::Array::of1(&data.buffer());
+                    global
+                        .post_message_with_transfer(&msg_value, &transfer_list)
+                        .unwrap();
                 }
                 Err(e) => {
-                    error!("Error reading stderr for instance {}: {}", id, e);
-                    send_buffer(&accumulated_data);
+                    error!("Error reading stdout for instance {}: {}", id, e);
                     break;
                 }
             }

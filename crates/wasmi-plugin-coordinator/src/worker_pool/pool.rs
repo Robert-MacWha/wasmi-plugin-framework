@@ -129,14 +129,13 @@ impl WorkerPool {
 impl WorkerHandle {
     pub fn spawn(id: u64) -> Result<WorkerHandle, SpawnError> {
         let name = format!("worker-{}", id);
-        info!("Spawning worker {}", id);
 
         // 2. Create the worker
         let options = WorkerOptions::new();
         options.set_name(&name);
         options.set_type(WorkerType::Module);
         let worker =
-            Worker::new_with_options(&worker_url(), &options).map_err(SpawnError::JsError)?;
+            Worker::new_with_options(&worker_url(id), &options).map_err(SpawnError::JsError)?;
 
         // 3. Set up onmessage handler
         let state = Arc::new(Mutex::new(WorkerState::Busy));
@@ -150,7 +149,6 @@ impl WorkerHandle {
         worker.set_onerror(Some(on_error.as_ref().unchecked_ref()));
 
         // 4. Send the "init" message with memory and module
-        info!("Initializing worker {}...", id);
         let msg = js_sys::Object::new();
         Reflect::set(&msg, &"type".into(), &"init".into()).map_err(SpawnError::ReflectError)?;
         Reflect::set(&msg, &"memory".into(), &wasm_bindgen::memory())
@@ -201,12 +199,6 @@ impl WorkerHandle {
         F: FnOnce(wasm_bindgen::JsValue) -> Fut + Send + 'static,
         Fut: Future<Output = ()> + 'static,
     {
-        info!("run_with: extra type = {:?}", extra.js_typeof());
-        info!(
-            "run_with: is Module = {:?}",
-            extra.is_instance_of::<web_sys::js_sys::WebAssembly::Module>()
-        );
-
         // 1. Box the function and get a raw pointer
         let box_f: Box<
             Box<dyn FnOnce(wasm_bindgen::JsValue) -> LocalBoxFuture<'static, ()> + Send>,
@@ -217,7 +209,6 @@ impl WorkerHandle {
         let worker = &self.worker;
 
         // 3. Send the "run" message with raw ptr
-        info!("Sending run_with message to worker {}", self.id);
         let msg = js_sys::Object::new();
         Reflect::set(&msg, &"type".into(), &"run_with".into()).unwrap();
         Reflect::set(&msg, &"taskPtr".into(), &ptr.into()).unwrap();
@@ -228,15 +219,15 @@ impl WorkerHandle {
     }
 
     pub fn terminate(&self) {
-        info!("Terminating worker {}", self.id);
         self.worker.terminate();
         let mut state = self.state.lock().unwrap();
         *state = WorkerState::Terminated;
     }
 }
 
-fn worker_url() -> String {
-    let script = include_str!("./worker.js");
+fn worker_url(id: u64) -> String {
+    let mut script = include_str!("./worker.js").to_string();
+    script.push_str(format!("\n//# sourceURL=worker-{}.js", id).as_str());
 
     let options = web_sys::BlobPropertyBag::new();
     options.set_type("application/javascript");

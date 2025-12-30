@@ -28,14 +28,17 @@ pub trait AsyncTransport<E>: Send + Sync + 'static {
     ) -> impl std::future::Future<Output = Result<RpcResponse, E>> + MaybeSend;
 }
 
+#[derive(Debug)]
 pub struct Transport<R = std::io::Stdin, W = std::io::Stdout> {
     inner: Arc<TransportInner<R, W>>,
 }
 
+#[derive(Debug)]
 pub struct TransportDriver<R = std::io::Stdin, W = std::io::Stdout> {
     inner: Arc<TransportInner<R, W>>,
 }
 
+#[derive(Debug)]
 struct TransportInner<R, W> {
     reader: Mutex<BufReader<R>>,
     writer: Mutex<W>,
@@ -176,12 +179,12 @@ impl<R: Read, W: Write> TransportInner<R, W> {
         let id = self.next_id();
         let request = RpcMessage::request(id, method.to_string(), params);
 
-        let (recv_tx, revc_rx) = oneshot::channel();
+        let (recv_tx, recv_rx) = oneshot::channel();
         self.pending.lock().unwrap().insert(id, recv_tx);
         self.write_message(&request)?;
 
         // Await the response
-        let res = revc_rx.await?;
+        let res = recv_rx.await?;
         let res = res.map_err(|e| TransportError::RpcError(e.error))?;
         Ok(res)
     }

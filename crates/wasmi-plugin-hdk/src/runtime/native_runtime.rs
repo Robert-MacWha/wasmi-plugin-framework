@@ -29,7 +29,7 @@ struct NativeSession {
 
 #[derive(Debug, Error)]
 pub enum NativeRuntimeError {
-    #[error("Wasmer runtime error: {0}")]
+    #[error("Wasmer Runtime Error: {0}")]
     WasmerError(#[from] wasmer::RuntimeError),
     #[error("IO error: {0}")]
     IOError(#[from] std::io::Error),

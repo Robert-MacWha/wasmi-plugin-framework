@@ -281,9 +281,6 @@ pub fn fd_read(
                 Some(r) => match r.read(&mut host_buf) {
                     Ok(n) => n,
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        // trace!("fd_read: WouldBlock, yielding to host");
-                        // ctx.awaiting_stdin = true;
-                        // let _ = sched_yield(caller);
                         return Errno::Again as i32;
                     }
                     Err(_) => return Errno::Fault as i32,

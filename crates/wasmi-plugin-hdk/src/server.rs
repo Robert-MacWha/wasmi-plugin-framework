@@ -23,6 +23,10 @@ impl<S: Default + Clone + Send + Sync + 'static> Default for HostServer<S> {
 
 impl<S: Clone + Send + Sync + 'static> HostServer<S> {
     pub fn new(state: S) -> Self {
+        std::panic::set_hook(Box::new(|panic_info| {
+            eprintln!("GUEST PANIC: {}", panic_info);
+        }));
+
         Self {
             router: Router::new(),
             state,
