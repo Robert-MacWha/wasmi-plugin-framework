@@ -13,10 +13,10 @@ use wasmer::Store;
 
 use crate::compile::Compiled;
 use crate::runtime::Runtime;
-use crate::runtime::non_blocking_pipe::{
+use wasmi_plugin_wasi::non_blocking_pipe::{
     NonBlockingPipeReader, NonBlockingPipeWriter, non_blocking_pipe,
 };
-use crate::wasi::wasi_ctx::WasiCtx;
+use wasmi_plugin_wasi::wasi_ctx::WasiCtx;
 
 pub struct NativeRuntime {
     sessions: Arc<Mutex<HashMap<u64, NativeSession>>>,

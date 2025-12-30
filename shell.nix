@@ -19,6 +19,7 @@ pkgs.mkShell {
     rust-analyzer
     cargo-sort
     cargo-machete
+    cargo-udeps
     samply
     binaryen
     wasm-pack

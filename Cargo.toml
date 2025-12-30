@@ -6,7 +6,7 @@ members = [
     "crates/wasmi-plugin-hdk",
     "crates/wasmi-plugin-pdk",
     "crates/wasmi-plugin-rt",
-    "crates/wasmi-plugin-wasi"
+    "crates/wasmi-plugin-wasi",
 ]
 
 resolver = "2"

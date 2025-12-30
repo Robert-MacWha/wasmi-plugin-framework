@@ -17,15 +17,14 @@ crate-type = ["cdylib"]
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 futures = { workspace = true }
-thiserror = { workspace = true }
-tracing = { workspace = true }
-wasm-bindgen = { workspace = true }
-wasm-bindgen-futures = { workspace = true }
-web-sys = { workspace = true, features = ["Worker", "WorkerOptions", "DedicatedWorkerGlobalScope", "WorkerType", "MessageEvent", "ErrorEvent", "Blob", "BlobPropertyBag", "Url", "console", "TextDecoder"] }
 serde = { workspace = true }
 serde-wasm-bindgen = { workspace = true }
-wasmi-plugin-hdk = { workspace = true }
-wasmi-plugin-wasi = { workspace = true }
-wasmer = { workspace = true, features = ["js-default", "js-serializable-module"] }
+thiserror = { workspace = true }
+tracing = { workspace = true }
 tracing-wasm = { workspace = true }
+wasm-bindgen = { workspace = true }
+wasm-bindgen-futures = { workspace = true }
+wasmer = { workspace = true, features = ["js-default", "js-serializable-module"] }
 wasmi-plugin-coordinator-protocol = { workspace = true }
+wasmi-plugin-wasi = { workspace = true }
+web-sys = { workspace = true, features = ["Worker", "WorkerOptions", "DedicatedWorkerGlobalScope", "WorkerType", "MessageEvent", "ErrorEvent", "Blob", "BlobPropertyBag", "Url", "console", "TextDecoder"] }

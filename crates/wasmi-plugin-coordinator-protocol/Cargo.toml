@@ -13,5 +13,5 @@ categories.workspace = true
 exclude.workspace = true
 
 [dependencies]
-serde = { workspace = true }
 getrandom = { workspace = true }
+serde = { workspace = true }

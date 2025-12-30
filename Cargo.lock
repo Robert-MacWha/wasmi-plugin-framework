@@ -2364,7 +2364,6 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasmer",
  "wasmi-plugin-coordinator-protocol",
- "wasmi-plugin-hdk",
  "wasmi-plugin-wasi",
  "web-sys",
 ]
@@ -2383,7 +2382,6 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "futures",
- "getrandom 0.3.4",
  "gloo-timers",
  "serde",
  "serde-wasm-bindgen",
