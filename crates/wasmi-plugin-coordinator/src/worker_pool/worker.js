@@ -11,7 +11,6 @@
 //     };
 // });
 
-console.log("Worker started");
 let wasmPkg = null;
 let processingQueue = Promise.resolve();
 
@@ -29,6 +28,7 @@ globalThis.onmessage = async ev => {
                 }
 
                 await init(module, memory);
+                wasmPkg.init_compute_worker();
             } else if (ev.data.type === "run") {
                 const { taskPtr } = ev.data;
                 try {

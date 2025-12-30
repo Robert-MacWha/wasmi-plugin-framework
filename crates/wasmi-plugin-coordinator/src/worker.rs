@@ -30,7 +30,7 @@ struct CoordinatorState {
 enum RunError {
     #[error("WASI Error: {0}")]
     Wasi(#[from] wasi_ctx::WasiError),
-    #[error("Runtime Error: {0}")]
+    #[error("Wasmer Runtime Error: {0}")]
     Runtime(#[from] wasmer::RuntimeError),
     #[error("Compile Error: {0}")]
     Compile(#[from] wasmer::CompileError),
@@ -45,6 +45,7 @@ pub async fn start_coordinator() {
             .build(),
     );
 
+    info!("Starting Wasmi Plugin Coordinator...");
     let global = js_sys::global().unchecked_into::<DedicatedWorkerGlobalScope>();
 
     let state = CoordinatorState {
@@ -62,6 +63,7 @@ pub async fn start_coordinator() {
     onmessage.forget();
 
     // Send ready message to main thread
+    info!("Coordinator ready");
     let ready_msg = CoordinatorMessage::Ready;
     let ready_value = serde_wasm_bindgen::to_value(&ready_msg).unwrap();
     global.post_message(&ready_value).unwrap();

@@ -54,7 +54,7 @@ impl PluginLogger for DefaultPluginLogger {}
 pub enum PluginError {
     #[error("Session error")]
     SessionError(#[from] PluginSessionError),
-    #[error("Runtime Error")]
+    #[error("Runtime Error: {0}")]
     RuntimeError(#[from] Box<dyn std::error::Error>),
     #[error("Plugin timeout")]
     PluginTimeout,

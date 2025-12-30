@@ -45,6 +45,10 @@ pub struct WorkerHandle {
 pub enum SpawnError {
     #[error("JavaScript error: {0:?}")]
     JsError(JsValue),
+    #[error("PostMessage error: {0:?}")]
+    PostMessageError(JsValue),
+    #[error("Reflect error: {0:?}")]
+    ReflectError(JsValue),
 }
 
 static GLOBAL_POOL: OnceLock<WorkerPool> = OnceLock::new();
@@ -125,6 +129,7 @@ impl WorkerPool {
 impl WorkerHandle {
     pub fn spawn(id: u64) -> Result<WorkerHandle, SpawnError> {
         let name = format!("worker-{}", id);
+        info!("Spawning worker {}", id);
 
         // 2. Create the worker
         let options = WorkerOptions::new();
@@ -145,12 +150,18 @@ impl WorkerHandle {
         worker.set_onerror(Some(on_error.as_ref().unchecked_ref()));
 
         // 4. Send the "init" message with memory and module
+        info!("Initializing worker {}...", id);
         let msg = js_sys::Object::new();
-        Reflect::set(&msg, &"type".into(), &"init".into()).unwrap();
-        Reflect::set(&msg, &"memory".into(), &wasm_bindgen::memory()).unwrap();
-        Reflect::set(&msg, &"module".into(), &current_module()).unwrap();
-        Reflect::set(&msg, &"sdkUrl".into(), &sdk_url().into()).unwrap();
-        worker.post_message(&msg).unwrap();
+        Reflect::set(&msg, &"type".into(), &"init".into()).map_err(SpawnError::ReflectError)?;
+        Reflect::set(&msg, &"memory".into(), &wasm_bindgen::memory())
+            .map_err(SpawnError::ReflectError)?;
+        Reflect::set(&msg, &"module".into(), &current_module())
+            .map_err(SpawnError::ReflectError)?;
+        Reflect::set(&msg, &"sdkUrl".into(), &sdk_url().into())
+            .map_err(SpawnError::ReflectError)?;
+        worker
+            .post_message(&msg)
+            .map_err(SpawnError::PostMessageError)?;
 
         info!("Spawned worker {}", id);
         Ok(WorkerHandle {
@@ -246,10 +257,6 @@ fn sdk_url() -> String {
         static IMPORT_META_URL: String;
     }
 
-    info!(
-        "SDK URL: {}",
-        IMPORT_META_URL.with(|url| url.clone().to_ascii_lowercase())
-    );
     IMPORT_META_URL.with(|url| url.clone())
 }
 
