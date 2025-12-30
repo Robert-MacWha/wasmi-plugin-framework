@@ -8,11 +8,12 @@ use wasm_bindgen::{
     JsCast,
     prelude::{Closure, wasm_bindgen},
 };
-use wasmi_plugin_hdk::{
-    runtime::coordinator_message::{CoordinatorMessage, InstanceId},
-    runtime::non_blocking_pipe::{NonBlockingPipeWriter, non_blocking_pipe},
-    wasi::wasi_ctx::{self, WasiReader},
-};
+use wasmi_plugin_coordinator_protocol::CoordinatorMessage;
+use wasmi_plugin_coordinator_protocol::InstanceId;
+use wasmi_plugin_wasi::non_blocking_pipe::NonBlockingPipeWriter;
+use wasmi_plugin_wasi::non_blocking_pipe::non_blocking_pipe;
+use wasmi_plugin_wasi::wasi_ctx;
+use wasmi_plugin_wasi::wasi_ctx::WasiReader;
 use web_sys::{
     DedicatedWorkerGlobalScope, MessageEvent,
     js_sys::{self, Reflect, Uint8Array, WebAssembly},

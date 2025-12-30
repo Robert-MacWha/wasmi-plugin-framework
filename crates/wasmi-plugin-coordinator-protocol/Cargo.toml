@@ -1,0 +1,17 @@
+[package]
+name = "wasmi-plugin-coordinator-protocol"
+version.workspace = true
+rust-version.workspace = true
+description = "Runtime utilities for wasmi-plugin-framework"
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+readme.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+exclude.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+getrandom = { workspace = true }

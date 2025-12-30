@@ -1,10 +1,12 @@
 [workspace]
 members = [
     "crates/test-plugin",
+    "crates/wasmi-plugin-coordinator",
+    "crates/wasmi-plugin-coordinator-protocol",
     "crates/wasmi-plugin-hdk",
     "crates/wasmi-plugin-pdk",
     "crates/wasmi-plugin-rt",
-    "crates/wasmi-plugin-coordinator"
+    "crates/wasmi-plugin-wasi"
 ]
 
 resolver = "2"
@@ -42,8 +44,10 @@ wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
 wasm-bindgen-test = "0.3"
 wasmer = { version = "6", default-features = false }
+wasmi-plugin-coordinator-protocol = { version = "0.1.0", path = "./crates/wasmi-plugin-coordinator-protocol" }
 wasmi-plugin-hdk = { version = "0.1.0", path = "./crates/wasmi-plugin-hdk" }
 wasmi-plugin-pdk = { version = "0.1.0", path = "./crates/wasmi-plugin-pdk" }
 wasmi-plugin-rt = { version = "0.1.0", path = "./crates/wasmi-plugin-rt" }
+wasmi-plugin-wasi = { version = "0.1.0", path = "./crates/wasmi-plugin-wasi" }
 web-sys = "0.3"
 web-time = "1"

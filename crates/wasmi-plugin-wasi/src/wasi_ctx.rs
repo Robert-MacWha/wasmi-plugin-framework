@@ -2,9 +2,8 @@ use std::io::{BufReader, Read, Write};
 use thiserror::Error;
 use tracing::{error, info, trace, warn};
 use wasmer::{FunctionEnvMut, RuntimeError};
+use wasmi_plugin_rt::blocking_sleep;
 use web_time::{Duration, SystemTime};
-
-use crate::time::blocking_sleep;
 
 pub trait WasiReader: Read + Send + Sync {
     /// Blocks the current thread until the reader is ready to read, or the timeout is reached.

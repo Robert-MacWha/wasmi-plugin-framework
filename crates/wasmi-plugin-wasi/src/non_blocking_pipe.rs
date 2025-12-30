@@ -12,7 +12,7 @@ use std::task::{Context, Poll, Waker};
 
 use futures::{AsyncRead, AsyncWrite};
 
-use crate::wasi::wasi_ctx::WasiReader;
+use crate::wasi_ctx::WasiReader;
 
 struct Inner {
     buf: VecDeque<u8>,

@@ -10,13 +10,13 @@ use thiserror::Error;
 use tracing::{error, info, warn};
 use wasm_bindgen::prelude::Closure;
 use wasm_bindgen::{JsCast, JsValue};
+use wasmi_plugin_coordinator_protocol::{CoordinatorMessage, InstanceId};
+use wasmi_plugin_wasi::non_blocking_pipe::non_blocking_pipe;
 use web_sys::js_sys::Reflect;
 use web_sys::{MessageEvent, Worker, WorkerOptions, WorkerType, js_sys};
 
 use crate::compile::Compiled;
 use crate::runtime::Runtime;
-use crate::runtime::coordinator_message::{CoordinatorMessage, InstanceId};
-use crate::runtime::non_blocking_pipe::non_blocking_pipe;
 
 pub struct WorkerRuntime {
     inner: Arc<Mutex<InnerWorkerRuntime>>,

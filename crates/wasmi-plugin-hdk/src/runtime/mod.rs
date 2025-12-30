@@ -1,5 +1,3 @@
-pub mod non_blocking_pipe;
-
 #[cfg(not(target_arch = "wasm32"))]
 pub use native_runtime::NativeRuntime;
 #[cfg(not(target_arch = "wasm32"))]
@@ -7,8 +5,6 @@ mod native_runtime;
 
 #[cfg(target_arch = "wasm32")]
 pub use worker_runtime::WorkerRuntime;
-#[cfg(target_arch = "wasm32")]
-pub mod coordinator_message;
 #[cfg(target_arch = "wasm32")]
 mod worker_runtime;
 

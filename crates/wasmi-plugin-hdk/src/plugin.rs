@@ -10,12 +10,12 @@ use wasmi_plugin_pdk::{
     rpc_message::{RpcError, RpcResponse},
     transport::AsyncTransport,
 };
+use wasmi_plugin_rt::sleep;
 
 use crate::host_handler::HostHandler;
 use crate::runtime;
 use crate::runtime::Runtime;
 use crate::session::{PluginSession, PluginSessionError};
-use crate::time::sleep;
 use crate::{compile::Compiled, plugin_id::PluginId};
 
 /// Plugin is an async-capable instance of a plugin

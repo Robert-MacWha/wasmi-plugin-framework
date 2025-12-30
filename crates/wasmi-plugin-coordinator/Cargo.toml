@@ -25,5 +25,7 @@ web-sys = { workspace = true, features = ["Worker", "WorkerOptions", "DedicatedW
 serde = { workspace = true }
 serde-wasm-bindgen = { workspace = true }
 wasmi-plugin-hdk = { workspace = true }
+wasmi-plugin-wasi = { workspace = true }
 wasmer = { workspace = true, features = ["js-default", "js-serializable-module"] }
 tracing-wasm = { workspace = true }
+wasmi-plugin-coordinator-protocol = { workspace = true }
