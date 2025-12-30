@@ -11,6 +11,12 @@ impl InstanceId {
     }
 }
 
+impl Default for InstanceId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl From<u64> for InstanceId {
     fn from(value: u64) -> Self {
         Self(value as u32)

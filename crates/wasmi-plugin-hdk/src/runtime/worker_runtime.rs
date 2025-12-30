@@ -63,7 +63,7 @@ unsafe impl Sync for InnerWorkerRuntime {}
 
 impl WorkerRuntime {
     pub fn global() -> &'static WorkerRuntime {
-        RUNTIME.get_or_init(|| Self::init())
+        RUNTIME.get_or_init(Self::init)
     }
 
     fn init() -> Self {
