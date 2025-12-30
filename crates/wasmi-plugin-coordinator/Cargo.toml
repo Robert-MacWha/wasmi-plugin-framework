@@ -12,10 +12,18 @@ keywords.workspace = true
 categories.workspace = true
 exclude.workspace = true
 
-[dependencies]
+[lib]
+crate-type = ["cdylib"]
 
-[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
-gloo-timers = { workspace = true }
-
-[target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dependencies]
-tokio = { workspace = true }
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+futures = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+wasm-bindgen = { workspace = true }
+wasm-bindgen-futures = { workspace = true }
+web-sys = { workspace = true, features = ["Worker", "WorkerOptions", "DedicatedWorkerGlobalScope", "WorkerType", "MessageEvent", "ErrorEvent", "Blob", "BlobPropertyBag", "Url", "console", "TextDecoder"] }
+serde = { workspace = true }
+serde-wasm-bindgen = { workspace = true }
+wasmi-plugin-hdk = { workspace = true }
+wasmer = { workspace = true, features = ["js-default", "js-serializable-module"] }
+tracing-wasm = { workspace = true }

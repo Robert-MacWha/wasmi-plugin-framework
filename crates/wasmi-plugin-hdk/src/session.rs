@@ -1,7 +1,7 @@
 use futures::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, io::BufReader};
 use serde_json::Value;
 use thiserror::Error;
-use tracing::{error, warn};
+use tracing::{error, info, warn};
 use wasmi_plugin_pdk::{
     api::RequestHandler,
     rpc_message::{RpcError, RpcMessage, RpcResponse},
@@ -65,6 +65,7 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin, H: RequestHandler<RpcError>>
                 }
                 Err(e) => return Err(PluginSessionError::Io(e)),
             }
+            info!("PluginSession: Received line: {}", line.trim());
 
             // Process complete lines
             let msg: RpcMessage = serde_json::from_str(&line)
@@ -78,7 +79,10 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin, H: RequestHandler<RpcError>>
                 RpcMessage::RpcRequest(req) => {
                     self.handle_request(req.id, &req.method, req.params).await?;
                 }
-                _ => {}
+                _ => {
+                    warn!("Unexpected message received: {:?}", msg);
+                    continue;
+                }
             }
         }
     }

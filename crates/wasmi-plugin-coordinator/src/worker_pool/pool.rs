@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use futures::future::LocalBoxFuture;
 use thiserror::Error;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 use wasm_bindgen::{
     JsCast, JsValue,
     prelude::{Closure, wasm_bindgen},
@@ -152,6 +152,7 @@ impl WorkerHandle {
         Reflect::set(&msg, &"sdkUrl".into(), &sdk_url().into()).unwrap();
         worker.post_message(&msg).unwrap();
 
+        info!("Spawned worker {}", id);
         Ok(WorkerHandle {
             id,
             state,
@@ -205,6 +206,7 @@ impl WorkerHandle {
         let worker = &self.worker;
 
         // 3. Send the "run" message with raw ptr
+        info!("Sending run_with message to worker {}", self.id);
         let msg = js_sys::Object::new();
         Reflect::set(&msg, &"type".into(), &"run_with".into()).unwrap();
         Reflect::set(&msg, &"taskPtr".into(), &ptr.into()).unwrap();
@@ -244,6 +246,10 @@ fn sdk_url() -> String {
         static IMPORT_META_URL: String;
     }
 
+    info!(
+        "SDK URL: {}",
+        IMPORT_META_URL.with(|url| url.clone().to_ascii_lowercase())
+    );
     IMPORT_META_URL.with(|url| url.clone())
 }
 
@@ -257,16 +263,13 @@ fn on_message_handler(
 ) -> Box<dyn FnMut(web_sys::MessageEvent)> {
     Box::new(move |e: web_sys::MessageEvent| {
         let Ok(msg) = serde_wasm_bindgen::from_value::<WorkerMessage>(e.data()) else {
-            error!(
-                "WorkerBridge: Received unknown message from worker: {:?}",
-                e.data()
-            );
+            error!("Received unknown message from worker: {:?}", e.data());
             return;
         };
 
         match msg {
-            WorkerMessage::Log { message, level, ts } => {
-                log_worker_message(&name, message, level, ts);
+            WorkerMessage::Log { message } => {
+                log_worker_message(&name, message);
             }
             WorkerMessage::Idle => {
                 info!(target: "WORKER", "[{}] Idle", name);
@@ -277,14 +280,8 @@ fn on_message_handler(
     })
 }
 
-fn log_worker_message(name: &str, msg: String, level: String, ts: f64) {
-    let _ = ts;
-
-    match level.as_str() {
-        "warn" => warn!(target: "WORKER", "[{}] {}", name, msg),
-        "error" => error!(target: "WORKER", "[{}] {}", name, msg),
-        _ => info!(target: "WORKER", "[{}] {}", name, msg),
-    }
+fn log_worker_message(name: &str, msg: String) {
+    info!(target: "WORKER", "[{}] {}", name, msg);
 }
 
 fn on_error_handler(name: String) -> Box<dyn FnMut(web_sys::ErrorEvent)> {

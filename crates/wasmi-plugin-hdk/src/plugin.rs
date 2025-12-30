@@ -1,9 +1,9 @@
 use std::{sync::Arc, time::Duration};
 
-use futures::{AsyncBufReadExt, AsyncRead, FutureExt, future::FusedFuture, io::BufReader};
+use futures::{AsyncBufReadExt, AsyncRead, FutureExt, io::BufReader};
 use serde_json::Value;
 use thiserror::Error;
-use tracing::info;
+use tracing::{error, info};
 use wasmi_plugin_pdk::{
     api::RequestHandler,
     router::BoxFuture,
@@ -130,7 +130,7 @@ impl Plugin {
 
 impl AsyncTransport<PluginError> for Plugin {
     async fn call_async(&self, method: &str, params: Value) -> Result<RpcResponse, PluginError> {
-        let runtime = self.create_runtime();
+        let runtime = self.runtime();
         let (id, stdin_writer, stdout_reader, stderr_reader) = runtime
             .spawn(self.inner.compiled.clone())
             .await
@@ -155,43 +155,36 @@ impl AsyncTransport<PluginError> for Plugin {
         //? Pump futures until (session_task AND stderr_task) OR timeout
         futures::pin_mut!(session_task, timeout, stderr_task);
 
-        let mut rpc_result = None;
         loop {
             futures::select! {
                 res = session_task => {
-                    rpc_result = Some(res);
-                    if stderr_task.is_terminated() {
-                        break;
-                    }
+                    return Ok(res?);
                 }
                 _ = timeout => {
+                    error!("Plugin {} timed out after {:?}", self.name(), self.inner.timeout);
                     //? Assume the instance has hung, so terminate its runtime
                     runtime.terminate(id).await;
                     return Err(PluginError::PluginTimeout);
                 }
                 _ = stderr_task => {
-                    if rpc_result.is_some() {
-                        break;
-                    }
+                    //? Stderr logging finished
                 }
             }
         }
-
-        Ok(rpc_result.expect("Loop exited without result or timeout")?)
     }
 }
 
 impl Plugin {
     #[allow(clippy::type_complexity)]
     #[cfg(not(target_arch = "wasm32"))]
-    fn create_runtime(&self) -> impl Runtime + Send + Sync + 'static {
+    fn runtime(&self) -> impl Runtime + Send + Sync + 'static {
         runtime::NativeRuntime::new()
     }
 
     #[allow(clippy::type_complexity)]
     #[cfg(target_arch = "wasm32")]
-    fn create_runtime(&self) -> impl Runtime + Send + Sync + 'static {
-        runtime::WorkerRuntime::new()
+    fn runtime(&self) -> impl Runtime + Send + Sync + 'static {
+        runtime::WorkerRuntime::global()
     }
 }
 

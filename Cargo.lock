@@ -2354,8 +2354,17 @@ dependencies = [
 name = "wasmi-plugin-coordinator"
 version = "0.1.0"
 dependencies = [
- "gloo-timers",
- "tokio",
+ "futures",
+ "serde",
+ "serde-wasm-bindgen",
+ "thiserror 2.0.17",
+ "tracing",
+ "tracing-wasm",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "wasmer",
+ "wasmi-plugin-hdk",
+ "web-sys",
 ]
 
 [[package]]
@@ -2404,6 +2413,8 @@ version = "0.1.0"
 dependencies = [
  "gloo-timers",
  "tokio",
+ "web-sys",
+ "web-time",
 ]
 
 [[package]]

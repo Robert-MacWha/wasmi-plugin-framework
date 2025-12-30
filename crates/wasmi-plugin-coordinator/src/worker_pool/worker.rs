@@ -27,6 +27,7 @@ pub fn execute_worker_task_with(ptr: u32, extra: JsValue) -> js_sys::Promise {
     let fut = task(extra);
 
     wasm_bindgen_futures::future_to_promise(async move {
+        info!("Executing worker task with extra...");
         if let Err(e) = std::panic::AssertUnwindSafe(fut).catch_unwind().await {
             error!("Panic in thread worker: {:?}", e);
         }

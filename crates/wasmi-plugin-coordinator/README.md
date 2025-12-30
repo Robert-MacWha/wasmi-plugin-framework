@@ -73,6 +73,7 @@ Essentially a workarround for 3's issues. By having a coordinator worker that co
 
 The primary issue here is software architecture. Deciding how to split responsibilities between the main thread and coordinator.
   - If `host` is entirely in the coordinator, then the main thread must make a postMessage call for every host interaction, even those that don't involve compute workers. This probably won't be too slow, but will be annoying to setup (wasm-specific proxy that'll pass calls back and forth).
-  - If `host` is in the main thread, and only sends requests to the coordinator when compute workers are involved, then the coordinator will need to query the host whenever any computer worker needs to interact with the host. However, this will introduce similar problems to those outlined in the asyncify section and so is probably unacceptable.
+  - If `host` is in the main thread, and only sends requests to the coordinator when compute workers are involved, then the coordinator will need to query the host whenever any computer worker needs to interact with the host.
 
-Looks like we have our winner - Seperate coordinator with the host entirely in the coordinator! ~Yay to middleware~
+I'm going to go with the latter approach since it seems cleaner. There is some significant added latency in messages vs shared memory for inter-plugin communication, but it also results in a much much much simpler architecture and UX for consumers of the library.
+  - Namely - with the former approach, it would require placing consumer code in the coordinator worker.  That means consumers of the library would need to write and compile code for the coordinator, which means setting up rust nightly, atomics + shared memory, and having a seperate crate.  With the latter I can just bundle the compiled generic `.wasm` coordinator with the library for use as-is.
