@@ -147,21 +147,17 @@ impl Runtime for &WorkerRuntime {
         stdin_proxy(stdin_reader, instance_id, self.inner.clone());
 
         // Notify the coordinator
-        let wasm_bytes_js = js_sys::Uint8Array::from(&compiled.wasm_bytes[..]);
         let wasm_module_js = compiled.js_module.clone();
         let spawn_msg = CoordinatorMessage::RunPlugin { id: instance_id };
         let msg_value = serde_wasm_bindgen::to_value(&spawn_msg)?;
-        Reflect::set(&msg_value, &"wasm_bytes".into(), &wasm_bytes_js)
-            .map_err(SpawnError::Reflect)?;
         Reflect::set(&msg_value, &"wasm_module".into(), &wasm_module_js)
             .map_err(SpawnError::Reflect)?;
-        let transfer_list = js_sys::Array::of1(&wasm_bytes_js.buffer());
 
         self.inner
             .lock()
             .unwrap()
             .coordinator
-            .post_message_with_transfer(&msg_value, &transfer_list)
+            .post_message(&msg_value)
             .map_err(SpawnError::PostMessage)?;
 
         // Await the response
@@ -286,7 +282,7 @@ fn on_message(inner: Arc<Mutex<InnerWorkerRuntime>>, e: web_sys::MessageEvent) {
             let mut inner = inner.lock().unwrap();
             if let Some(instance) = inner.instances.get_mut(&id) {
                 if let Some(tx) = instance.run_plugin_resp_tx.take() {
-                    let _ = tx.send(status);
+                    let _ = tx.send(status.map_err(|e| e.to_string()));
                 } else {
                     warn!("No response channel found for instance {:?}", id);
                 }

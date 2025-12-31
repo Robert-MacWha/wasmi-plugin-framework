@@ -11,6 +11,7 @@ use wasm_bindgen::{
 };
 use wasmi_plugin_coordinator_protocol::CoordinatorMessage;
 use wasmi_plugin_coordinator_protocol::InstanceId;
+use wasmi_plugin_coordinator_protocol::RunPluginError;
 use wasmi_plugin_wasi::non_blocking_pipe::NonBlockingPipeWriter;
 use wasmi_plugin_wasi::non_blocking_pipe::non_blocking_pipe;
 use wasmi_plugin_wasi::wasi_ctx;
@@ -97,24 +98,14 @@ fn on_message(state: &mut CoordinatorState, e: web_sys::MessageEvent) {
             terminate(state, id);
         }
         CoordinatorMessage::RunPlugin { id } => {
-            let Ok(wasm_bytes) = Reflect::get(&data, &"wasm_bytes".into()) else {
-                error!("Failed to get wasm_bytes from message");
-                return;
-            };
-
             let Ok(wasm_module) = Reflect::get(&data, &"wasm_module".into()) else {
                 error!("Failed to get wasm_module from message");
                 return;
             };
 
-            let status = match run_plugin(
-                state,
-                id,
-                wasm_bytes.unchecked_into(),
-                wasm_module.unchecked_into(),
-            ) {
+            let status = match run_plugin(state, id, wasm_module.unchecked_into()) {
                 Ok(_) => Ok(()),
-                Err(e) => Err(e.to_string()),
+                Err(e) => Err(RunPluginError::RuntimeError(e.to_string())),
             };
 
             let response_msg = CoordinatorMessage::RunPluginResp { id, status };
@@ -153,11 +144,8 @@ fn terminate(state: &mut CoordinatorState, id: InstanceId) {
 fn run_plugin(
     state: &mut CoordinatorState,
     id: InstanceId,
-    wasm_bytes: Uint8Array,
     wasm_module: WebAssembly::Module,
 ) -> Result<Arc<WorkerHandle>, SpawnError> {
-    let wasm_bytes: Vec<u8> = wasm_bytes.to_vec();
-
     let (stdin_reader, stdin_writer) = non_blocking_pipe();
     let (stdout_reader, stdout_writer) = non_blocking_pipe();
     let (stderr_reader, stderr_writer) = non_blocking_pipe();
@@ -170,13 +158,7 @@ fn run_plugin(
 
     let pool = WorkerPool::global();
     pool.run_with(&wasm_module, move |extra| async move {
-        let res = run_instance(
-            extra,
-            wasm_bytes,
-            stdin_reader,
-            stdout_writer,
-            stderr_writer,
-        );
+        let res = run_instance(extra, stdin_reader, stdout_writer, stderr_writer);
         if let Err(e) = res {
             error!("Error running Wasm instance: {}", e);
         }
@@ -185,7 +167,6 @@ fn run_plugin(
 
 fn run_instance(
     js_module: wasm_bindgen::JsValue,
-    wasm_bytes: Vec<u8>,
     stdin: impl WasiReader + 'static,
     stdout: impl Write + Send + Sync + 'static,
     stderr: impl Write + Send + Sync + 'static,
@@ -193,7 +174,7 @@ fn run_instance(
     let mut store = wasmer::Store::default();
 
     let js_module: WebAssembly::Module = js_module.dyn_into().unwrap();
-    let module = (js_module, wasm_bytes).into();
+    let module = js_module.into();
 
     let wasi_ctx = wasi_ctx::WasiCtx::new()
         .set_stdin(stdin)

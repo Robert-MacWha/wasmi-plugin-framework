@@ -1,6 +1,7 @@
 use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct InstanceId(u32);
@@ -35,6 +36,12 @@ impl Display for InstanceId {
     }
 }
 
+#[derive(Debug, Error, Serialize, Deserialize, Eq, PartialEq)]
+pub enum RunPluginError {
+    #[error("Runtime error: {0}")]
+    RuntimeError(String),
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum CoordinatorMessage {
@@ -44,7 +51,7 @@ pub enum CoordinatorMessage {
     },
     RunPluginResp {
         id: InstanceId,
-        status: Result<(), String>,
+        status: Result<(), RunPluginError>,
     },
     Stdin {
         id: InstanceId,
