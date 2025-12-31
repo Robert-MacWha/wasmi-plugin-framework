@@ -47,22 +47,25 @@ pub fn non_blocking_pipe() -> (NonBlockingPipeReader, NonBlockingPipeWriter) {
 impl Read for NonBlockingPipeReader {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let mut inner = self.inner.lock().unwrap();
-        let mut n = 0;
-        while n < buf.len() {
-            if let Some(b) = inner.buf.pop_front() {
-                buf[n] = b;
-                n += 1;
-            } else {
-                break;
+
+        let (front, back) = inner.buf.as_slices();
+        let to_read = buf.len().min(front.len() + back.len());
+
+        if to_read > 0 {
+            let from_front = to_read.min(front.len());
+            buf[..from_front].copy_from_slice(&front[..from_front]);
+
+            if from_front < to_read {
+                let from_back = to_read - from_front;
+                buf[from_front..to_read].copy_from_slice(&back[..from_back]);
             }
-        }
-        if n == 0 && inner.closed {
+
+            inner.buf.drain(..to_read);
+            Ok(to_read)
+        } else if inner.closed {
             Ok(0)
-        } else if n == 0 {
-            // no data, behave like a nonblocking pipe
-            Err(io::ErrorKind::WouldBlock.into())
         } else {
-            Ok(n)
+            Err(io::ErrorKind::WouldBlock.into())
         }
     }
 }
@@ -81,35 +84,19 @@ impl WasiReader for NonBlockingPipeReader {
 
 impl AsyncRead for NonBlockingPipeReader {
     fn poll_read(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        let mut inner = self.inner.lock().unwrap();
-
-        let mut bytes_read = 0;
-
-        // Read available data
-        while bytes_read < buf.len() {
-            if let Some(b) = inner.buf.pop_front() {
-                buf[bytes_read] = b;
-                bytes_read += 1;
-            } else {
-                break;
+        let read = self.as_mut().get_mut().read(buf);
+        match read {
+            Ok(n) => Poll::Ready(Ok(n)),
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                let mut inner = self.inner.lock().unwrap();
+                inner.waker = Some(cx.waker().clone());
+                Poll::Pending
             }
-        }
-
-        if bytes_read > 0 {
-            inner.waker = None; // Clear stale waker
-            Poll::Ready(Ok(bytes_read))
-        } else if inner.closed {
-            // EOF
-            inner.waker = None;
-            Poll::Ready(Ok(0))
-        } else {
-            // No data available, register waker and return pending
-            inner.waker = Some(cx.waker().clone());
-            Poll::Pending
+            Err(e) => Poll::Ready(Err(e)),
         }
     }
 }
