@@ -23,6 +23,13 @@ wasmi-plugin-pdk = { workspace = true }
 
 [profile.release]
 opt-level = 3
-lto = "fat"
+lto = "thin"
 codegen-units = 1
-strip = true
+panic = "abort"
+
+# Keep function names in release builds
+strip = "none"
+debug = "line-tables-only"
+
+[profile.release.package."*"]
+opt-level = 3

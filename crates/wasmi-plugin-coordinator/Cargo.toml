@@ -30,3 +30,16 @@ wasmer = { workspace = true, features = ["js-default", "js-serializable-module"]
 wasmi-plugin-coordinator-protocol = { workspace = true }
 wasmi-plugin-wasi = { workspace = true }
 web-sys = { workspace = true, features = ["Worker", "WorkerOptions", "DedicatedWorkerGlobalScope", "WorkerType", "MessageEvent", "ErrorEvent", "Blob", "BlobPropertyBag", "Url", "console", "TextDecoder"] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+
+# Keep function names in release builds
+strip = "none"
+debug = "line-tables-only"
+
+[profile.release.package."*"]
+opt-level = 3
