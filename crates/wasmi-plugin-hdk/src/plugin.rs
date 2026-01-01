@@ -52,13 +52,13 @@ impl PluginLogger for DefaultPluginLogger {}
 
 #[derive(Debug, Error)]
 pub enum PluginError {
-    #[error("Session error")]
+    #[error("Session error: {0}")]
     SessionError(#[from] PluginSessionError),
     #[error("Runtime Error: {0}")]
     RuntimeError(#[from] Box<dyn std::error::Error>),
     #[error("Plugin timeout")]
     PluginTimeout,
-    #[error("Plugin compilation error")]
+    #[error("Plugin compilation error: {0}")]
     CompileError(#[from] wasmer::CompileError),
 }
 

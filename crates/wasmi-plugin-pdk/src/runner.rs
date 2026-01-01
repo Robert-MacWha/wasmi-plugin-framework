@@ -71,7 +71,6 @@ impl PluginRunner {
     fn try_run(&self) -> Result<(), PluginServerError> {
         //? Read request
         let request = self.read_request()?;
-        info!("PluginServer: Received request: {:?}", request);
 
         let (transport, driver) = Transport::new(std::io::stdin(), std::io::stdout());
         let resp = futures::executor::block_on(async {

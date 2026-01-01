@@ -270,7 +270,6 @@ fn on_message_handler(
                 log_worker_message(&name, message);
             }
             WorkerMessage::Idle => {
-                info!(target: "WORKER", "[{}] Idle", name);
                 let mut worker_state = state.lock().unwrap();
                 *worker_state = WorkerState::Idle;
             }
