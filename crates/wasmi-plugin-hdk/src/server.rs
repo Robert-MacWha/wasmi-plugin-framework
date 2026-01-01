@@ -1,11 +1,11 @@
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use wasmi_plugin_pdk::{
+    router::{BoxFuture, MaybeSend, Router},
     rpc_message::RpcError,
-    server::{BoxFuture, MaybeSend, Router},
 };
 
-use crate::{host_handler::HostHandler, plugin::PluginId};
+use crate::{host_handler::HostHandler, plugin_id::PluginId};
 
 pub struct HostServer<S: Clone + Send + Sync + 'static> {
     state: S,
@@ -23,6 +23,10 @@ impl<S: Default + Clone + Send + Sync + 'static> Default for HostServer<S> {
 
 impl<S: Clone + Send + Sync + 'static> HostServer<S> {
     pub fn new(state: S) -> Self {
+        std::panic::set_hook(Box::new(|panic_info| {
+            eprintln!("GUEST PANIC: {}", panic_info);
+        }));
+
         Self {
             router: Router::new(),
             state,

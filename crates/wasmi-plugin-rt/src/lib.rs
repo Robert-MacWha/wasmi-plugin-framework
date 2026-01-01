@@ -1,11 +1,7 @@
-use std::time::Duration;
-pub use web_time;
-
 pub fn yield_now() -> impl std::future::Future<Output = ()> {
     #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
     {
-        use gloo_timers::future::TimeoutFuture;
-        TimeoutFuture::new(0)
+        gloo_timers::future::TimeoutFuture::new(0)
     }
 
     #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
@@ -14,11 +10,7 @@ pub fn yield_now() -> impl std::future::Future<Output = ()> {
     }
 }
 
-pub fn now() -> web_time::Instant {
-    web_time::Instant::now()
-}
-
-pub async fn sleep(dur: Duration) {
+pub async fn sleep(dur: web_time::Duration) {
     #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
     {
         gloo_timers::future::TimeoutFuture::new(dur.as_millis() as u32).await;
@@ -27,5 +19,21 @@ pub async fn sleep(dur: Duration) {
     #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     {
         tokio::time::sleep(dur).await;
+    }
+}
+
+pub fn blocking_sleep(dur: web_time::Duration) {
+    #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+    {
+        let stn = web_sys::js_sys::SharedArrayBuffer::new(4);
+        let typed_array = web_sys::js_sys::Int32Array::new(&stn);
+
+        let millis = dur.as_millis() as f64;
+        let _ = web_sys::js_sys::Atomics::wait_with_timeout(&typed_array, 0, 0, millis);
+    }
+
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+    {
+        std::thread::sleep(dur);
     }
 }

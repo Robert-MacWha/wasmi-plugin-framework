@@ -14,13 +14,22 @@ exclude.workspace = true
 publish = false
 
 [dependencies]
+futures = { workspace = true }
 rand = { workspace = true }
 serde_json = { workspace = true }
-tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 wasmi-plugin-pdk = { workspace = true }
 
 [profile.release]
-lto = "fat"
+opt-level = 3
+lto = "thin"
 codegen-units = 1
+panic = "abort"
+
+# Keep function names in release builds
+strip = "none"
+debug = "line-tables-only"
+
+[profile.release.package."*"]
+opt-level = 3

@@ -1,6 +1,7 @@
 mod compile;
 pub mod host_handler;
 pub mod plugin;
-mod plugin_instance;
+pub mod plugin_id;
+pub mod runtime;
 pub mod server;
-mod wasi;
+pub mod session;
