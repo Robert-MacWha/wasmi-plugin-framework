@@ -41,7 +41,7 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin, H: RequestHandler<RpcError>>
     /// Create a new PluginSession with the given reader, writer, and request handler.
     pub fn new(reader: R, writer: W, handler: H) -> Self {
         PluginSession {
-            reader: reader,
+            reader,
             writer,
             handler: Arc::new(handler),
         }
@@ -68,17 +68,20 @@ impl<R: AsyncRead + Unpin, W: AsyncWrite + Unpin, H: RequestHandler<RpcError>>
 
         futures::pin_mut!(reader_fut, writer_fut, dispatcher_fut);
 
-        loop {
-            futures::select_biased! {
-                result = dispatcher_fut => return result,
-                reader_result = reader_fut => {
-                    reader_result?;
-                    return Err(PluginSessionError::Eof);
-                }
-                writer_result = writer_fut => {
-                    writer_result?;
-                    return Err(PluginSessionError::ChannelClosed);
-                }
+        futures::select_biased! {
+            result = dispatcher_fut => result,
+            reader_result = reader_fut => {
+                reader_result?;
+                //? If reader task ends, it means the pipe has closed. However,
+                //? the final response might still be in flight in the dispatcher
+                //? task, so we wait for it to complete. If the pipe did EOF without
+                //? sending a response, the dispatcher will eventually starve
+                //? and EOF itself.
+                dispatcher_fut.await
+            }
+            writer_result = writer_fut => {
+                writer_result?;
+                Err(PluginSessionError::ChannelClosed)
             }
         }
     }
@@ -94,7 +97,11 @@ async fn reader_task<R: AsyncRead + Unpin>(
     loop {
         line.clear();
         match reader.read_line(&mut line).await {
-            Ok(0) => return Err(PluginSessionError::Eof),
+            Ok(0) => {
+                //? EOF reached. Returning Ok allows the dispatcher to finish
+                //? processing any pending messages.
+                return Ok(());
+            }
             Ok(_) => {}
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 yield_now().await;
