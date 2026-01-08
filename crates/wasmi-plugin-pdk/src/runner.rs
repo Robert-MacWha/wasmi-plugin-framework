@@ -1,13 +1,13 @@
 use std::io::{BufRead, BufReader};
 
-use futures::{FutureExt, select};
 use serde::{Serialize, de::DeserializeOwned};
 use thiserror::Error;
+use tokio::select;
 use tracing::{error, info};
 
 use crate::{
     router::{MaybeSend, Router},
-    rpc_message::{RpcError, RpcMessage, RpcRequest},
+    rpc_message::{RpcError, RpcErrorContext, RpcMessage, RpcRequest},
     transport::Transport,
 };
 
@@ -73,18 +73,25 @@ impl PluginRunner {
         let request = self.read_request()?;
 
         let (transport, driver) = Transport::new(std::io::stdin(), std::io::stdout());
-        let resp = futures::executor::block_on(async {
-            select! {
-                res = self.router.handle_with_state(transport, &request.method, request.params).fuse() => {
-                    res
-                },
-                drive_err = driver.run().fuse() => {
-                    match drive_err {
-                        Ok(_) => Err(RpcError::custom("Transport driver exited unexpectedly")),
-                        Err(e) => Err(e.into()),
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .context("Error creating tokio runtime")?;
+
+        let resp = rt.block_on(async {
+            let local = tokio::task::LocalSet::new();
+            local.run_until(async {
+                select! {
+                    res = self.router.handle_with_state(transport, &request.method, request.params) => res,
+                    drive_err = driver.run() => {
+                        match drive_err {
+                            Ok(_) => Err(RpcError::custom("Transport driver exited unexpectedly")),
+                            Err(e) => Err(e.into()),
+                        }
                     }
                 }
-            }
+            }).await
         });
 
         //? Send response
