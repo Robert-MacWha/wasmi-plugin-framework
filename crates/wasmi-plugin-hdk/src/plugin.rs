@@ -12,11 +12,11 @@ use wasmi_plugin_pdk::{
 };
 use wasmi_plugin_rt::sleep;
 
-use crate::host_handler::HostHandler;
 use crate::runtime;
 use crate::runtime::Runtime;
 use crate::session::{PluginSession, PluginSessionError};
 use crate::{compile::Compiled, plugin_id::PluginId};
+use crate::{host_handler::HostHandler, instance_id::InstanceId};
 
 /// Plugin is an async-capable instance of a plugin
 #[derive(Clone)]
@@ -144,7 +144,7 @@ impl AsyncTransport<PluginError> for Plugin {
         //? transport setup
         let handler = PluginCallback {
             handler: self.inner.handler.clone(),
-            uuid: self.inner.id,
+            uuid: InstanceId::new(self.inner.id),
         };
         let session = PluginSession::new(stdout_reader, stdin_writer, handler);
         let session_task = session.call_async(method, params).fuse();
@@ -192,7 +192,7 @@ impl Plugin {
 /// with the added `uuid` context.
 struct PluginCallback {
     handler: Arc<dyn HostHandler>,
-    uuid: PluginId,
+    uuid: InstanceId,
 }
 
 impl RequestHandler<RpcError> for PluginCallback {

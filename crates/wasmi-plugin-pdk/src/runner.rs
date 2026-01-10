@@ -3,7 +3,7 @@ use std::io::{BufRead, BufReader};
 use serde::{Serialize, de::DeserializeOwned};
 use thiserror::Error;
 use tokio::select;
-use tracing::{error, info};
+use tracing::error;
 
 use crate::{
     router::{MaybeSend, Router},
@@ -99,7 +99,6 @@ impl PluginRunner {
             Ok(result) => RpcMessage::response(request.id, result),
             Err(error) => RpcMessage::error_response(request.id, error),
         };
-        info!("PluginServer: Sending response: {:?}", resp);
         driver.write_message(&resp)?;
 
         Ok(())

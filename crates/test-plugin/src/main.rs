@@ -113,8 +113,6 @@ fn main() {
         .with_ansi(false)
         .without_time()
         .init();
-    info!("Starting plugin...");
-    info!("Test");
 
     PluginRunner::new()
         .with_method("ping", ping)
