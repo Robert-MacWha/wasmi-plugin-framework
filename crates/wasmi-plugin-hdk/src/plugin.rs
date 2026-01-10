@@ -1,200 +1,198 @@
-use std::{fmt::Display, io::BufReader, sync::Arc};
+use std::{sync::Arc, time::Duration};
 
-use async_trait::async_trait;
-use futures::{AsyncBufReadExt, FutureExt};
-use serde::{Deserialize, Serialize};
+use futures::{AsyncBufReadExt, AsyncRead, FutureExt, io::BufReader};
 use serde_json::Value;
 use thiserror::Error;
-use tracing::info;
-use uuid::Uuid;
-use wasmi::{Engine, Module};
+use tracing::{error, info};
 use wasmi_plugin_pdk::{
     api::RequestHandler,
+    router::BoxFuture,
     rpc_message::{RpcError, RpcResponse},
-    server::BoxFuture,
-    transport::{JsonRpcTransport, Transport},
+    transport::AsyncTransport,
 };
+use wasmi_plugin_rt::sleep;
 
-use crate::{
-    compile::compile_plugin,
-    host_handler::HostHandler,
-    plugin_instance::{SpawnError, spawn_plugin},
-};
+use crate::runtime;
+use crate::runtime::Runtime;
+use crate::session::{PluginSession, PluginSessionError};
+use crate::{compile::Compiled, plugin_id::PluginId};
+use crate::{host_handler::HostHandler, instance_id::InstanceId};
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct PluginId(Uuid);
+/// Plugin is an async-capable instance of a plugin
+#[derive(Clone)]
+pub struct Plugin {
+    inner: Arc<InnerPlugin>,
+}
 
-impl Default for PluginId {
-    fn default() -> Self {
-        PluginId(Uuid::new_v4())
+pub struct PluginBuilder {
+    id: PluginId,
+    name: String,
+    handler: Arc<dyn HostHandler>,
+    logger: Arc<dyn PluginLogger>,
+    wasm_bytes: Vec<u8>,
+    timeout: Duration,
+}
+
+struct InnerPlugin {
+    id: PluginId,
+    handler: Arc<dyn HostHandler>,
+    logger: Arc<dyn PluginLogger>,
+    compiled: Compiled,
+    timeout: Duration,
+}
+
+pub trait PluginLogger: Send + Sync + 'static {
+    fn log(&self, name: &str, message: &str) {
+        info!(target: "plugin", "[plugin] [{}] {}", name, message);
     }
 }
 
-impl PluginId {
-    pub fn new() -> Self {
-        Self::default()
+struct DefaultPluginLogger;
+impl PluginLogger for DefaultPluginLogger {}
+
+#[derive(Debug, Error)]
+pub enum PluginError {
+    #[error("Session error: {0}")]
+    SessionError(#[from] PluginSessionError),
+    #[error("Runtime Error: {0}")]
+    RuntimeError(#[from] Box<dyn std::error::Error>),
+    #[error("Plugin timeout")]
+    PluginTimeout,
+    #[error("Plugin compilation error: {0}")]
+    CompileError(#[from] wasmer::CompileError),
+}
+
+impl From<PluginError> for RpcError {
+    fn from(value: PluginError) -> Self {
+        RpcError::custom(value.to_string())
     }
 }
 
-impl From<u128> for PluginId {
-    fn from(value: u128) -> Self {
-        PluginId(Uuid::from_u128(value))
-    }
-}
-
-impl Display for PluginId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if f.alternate() {
-            write!(f, "{}", self.0) // full: {:#}
-        } else {
-            let uuid_str = self.0.as_simple().to_string();
-            write!(f, "{}", &uuid_str[uuid_str.len() - 6..]) // short {}
+impl Plugin {
+    pub fn builder(
+        name: impl Into<String>,
+        wasm_bytes: Vec<u8>,
+        handler: Arc<dyn HostHandler>,
+    ) -> PluginBuilder {
+        PluginBuilder {
+            id: PluginId::new(),
+            name: name.into(),
+            handler,
+            logger: Arc::new(DefaultPluginLogger),
+            wasm_bytes,
+            timeout: Duration::from_secs(10),
         }
     }
 }
 
-type Logger = Box<dyn Fn(&str, &str) + Send + Sync>;
+impl PluginBuilder {
+    pub async fn build(self) -> Result<Plugin, PluginError> {
+        let compiled = Compiled::new(&self.name, &self.wasm_bytes).await?;
 
-/// Plugin is an async-capable instance of a plugin
-pub struct Plugin {
-    name: String,
-    id: PluginId,
-    handler: Arc<dyn HostHandler>,
-    engine: Engine,
-    module: Module,
-    logger: Logger,
-    max_fuel: Option<u64>,
-}
-
-#[derive(Debug, Error)]
-pub enum PluginError {
-    #[error("spawn error")]
-    SpawnError(#[from] SpawnError),
-    #[error("transport error")]
-    RpcError(#[from] RpcError),
-    #[error("plugin died")]
-    PluginDied,
-}
-
-impl Plugin {
-    pub fn new(
-        name: &str,
-        wasm_bytes: Vec<u8>,
-        handler: Arc<dyn HostHandler>,
-    ) -> Result<Self, wasmi::Error> {
-        let (engine, module) = compile_plugin(wasm_bytes.clone())?;
+        let inner = InnerPlugin {
+            id: self.id,
+            handler: self.handler,
+            logger: self.logger,
+            compiled,
+            timeout: self.timeout,
+        };
 
         Ok(Plugin {
-            name: name.to_string(),
-            id: PluginId::new(),
-            handler,
-            engine,
-            module,
-            max_fuel: None,
-            logger: Box::new(default_plugin_logger),
+            inner: Arc::new(inner),
         })
     }
 
-    /// Sets the plugin ID for this instance. If no ID is provided a random
-    /// UUID is generated.
     pub fn with_id(mut self, id: PluginId) -> Self {
         self.id = id;
         self
     }
 
-    /// Sets a custom logger for the plugin instance. Plugins log messages to
-    /// stderr, which are captured and passed to this logger function. If
-    /// no logger is provided a default logger is used.
-    pub fn with_logger(mut self, logger: Logger) -> Self {
-        self.logger = Box::new(logger);
+    pub fn with_logger(mut self, logger: impl PluginLogger) -> Self {
+        self.logger = Arc::new(logger);
         self
     }
 
-    /// Sets the maximum fuel for the plugin instance.
-    ///
-    /// The fuel limit controls how frequently the plugin is interrupted to
-    /// check for cancellation and yield to other tasks. Lower fuel limits
-    /// result in more frequent interruptions, which can improve responsiveness
-    /// for long-running compute-intensive tasks, but will also incur more overhead.
-    ///
-    /// Generally a fuel between 10_000 and 1_000_000 is a good starting point.
-    ///
-    /// Leave as None to use the default fuel limit, a sensible default of 100_000.
-    pub fn with_max_fuel(mut self, max_fuel: u64) -> Self {
-        self.max_fuel = Some(max_fuel);
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
         self
     }
+}
 
+impl Plugin {
     pub fn name(&self) -> &str {
-        &self.name
+        &self.inner.compiled.name
     }
 
     pub fn id(&self) -> PluginId {
-        self.id
+        self.inner.id
     }
 }
 
-impl PluginError {
-    pub fn as_rpc_code(&self) -> RpcError {
-        match self {
-            PluginError::RpcError(code) => code.clone(),
-            _ => RpcError::Custom(self.to_string()),
-        }
-    }
-}
+impl AsyncTransport<PluginError> for Plugin {
+    async fn call_async(&self, method: &str, params: Value) -> Result<RpcResponse, PluginError> {
+        let runtime = self.runtime();
+        let (id, stdin_writer, stdout_reader, stderr_reader) = runtime
+            .spawn(self.inner.compiled.clone())
+            .await
+            .map_err(|e| PluginError::RuntimeError(e.into()))?;
 
-impl From<PluginError> for RpcError {
-    fn from(err: PluginError) -> Self {
-        match err {
-            PluginError::RpcError(code) => code,
-            _ => RpcError::Custom(err.to_string()),
-        }
-    }
-}
+        //? stderr logging
+        let name = self.inner.compiled.name.clone();
+        let logger = self.inner.logger.clone();
+        let stderr_task = log_stderr(&name, stderr_reader, logger).fuse();
 
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-impl Transport<PluginError> for Plugin {
-    async fn call(&self, method: &str, params: Value) -> Result<RpcResponse, PluginError> {
-        let (stdin_writer, stdout_reader, stderr_reader, is_running, instance_task) =
-            spawn_plugin(&self.engine, &self.module, self.max_fuel)?;
+        //? transport setup
+        let handler = PluginCallback {
+            handler: self.inner.handler.clone(),
+            uuid: InstanceId::new(self.inner.id),
+        };
+        let session = PluginSession::new(stdout_reader, stdin_writer, handler);
+        let session_task = session.call_async(method, params).fuse();
 
-        let name = self.name.clone();
-        let stderr_task = async move {
-            let mut buf_reader = futures::io::BufReader::new(stderr_reader);
-            let mut line = String::new();
-            while buf_reader.read_line(&mut line).await.is_ok_and(|n| n > 0) {
-                (self.logger)(&name, line.trim_end());
-                line.clear();
+        //? timeout
+        let timeout = sleep(self.inner.timeout).fuse();
+
+        //? Pump futures until (session_task AND stderr_task) OR timeout
+        futures::pin_mut!(session_task, timeout, stderr_task);
+
+        loop {
+            futures::select! {
+                res = session_task => {
+                    return Ok(res?);
+                }
+                _ = timeout => {
+                    error!("Plugin {} timed out after {:?}", self.name(), self.inner.timeout);
+                    //? Assume the instance has hung, so terminate its runtime
+                    runtime.terminate(id).await;
+                    return Err(PluginError::PluginTimeout);
+                }
+                _ = stderr_task => {
+                    //? Stderr logging finished
+                }
             }
         }
-        .fuse();
-
-        let handler = PluginCallback {
-            handler: self.handler.clone(),
-            uuid: self.id,
-        };
-
-        let buf_reader = BufReader::new(stdout_reader);
-        let transport = JsonRpcTransport::with_handler(buf_reader, stdin_writer, handler);
-        let rpc_task = transport.call(method, params).fuse();
-
-        let instance_task = instance_task.fuse();
-        futures::pin_mut!(rpc_task, instance_task, stderr_task);
-
-        //? Run the transport, plugin, and stderr logger until one of them completes
-        let (res, _, _) = futures::join!(rpc_task, instance_task, stderr_task);
-        let res = res?;
-
-        is_running.store(false, std::sync::atomic::Ordering::SeqCst);
-
-        Ok(res)
     }
 }
 
+impl Plugin {
+    #[allow(clippy::type_complexity)]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn runtime(&self) -> impl Runtime + Send + Sync + 'static {
+        runtime::NativeRuntime::new()
+    }
+
+    #[allow(clippy::type_complexity)]
+    #[cfg(target_arch = "wasm32")]
+    fn runtime(&self) -> impl Runtime + Send + Sync + 'static {
+        runtime::WorkerRuntime::global()
+    }
+}
+
+/// Helper struct that implements RequestHandler by forwarding it to a HostHandler
+/// with the added `uuid` context.
 struct PluginCallback {
     handler: Arc<dyn HostHandler>,
-    uuid: PluginId,
+    uuid: InstanceId,
 }
 
 impl RequestHandler<RpcError> for PluginCallback {
@@ -204,6 +202,19 @@ impl RequestHandler<RpcError> for PluginCallback {
     }
 }
 
-fn default_plugin_logger(name: &str, msg: &str) {
-    info!(target: "plugin", "[plugin] [{}] {}", name, msg);
+async fn log_stderr(
+    name: &str,
+    reader: impl AsyncRead + Unpin + Send + Sync + 'static,
+    logger: Arc<dyn PluginLogger>,
+) {
+    let name = name.to_string();
+    let mut reader = BufReader::new(reader);
+    let mut line = String::new();
+    while let Ok(n) = reader.read_line(&mut line).await {
+        if n == 0 {
+            break;
+        }
+        logger.log(&name, line.trim_end());
+        line.clear();
+    }
 }

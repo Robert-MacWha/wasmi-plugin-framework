@@ -1,11 +1,9 @@
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
-use tokio::runtime::Builder;
-use tracing::warn;
 
-use crate::{api::RequestHandler, rpc_message::RpcError, transport::JsonRpcTransport};
+use crate::rpc_message::RpcError;
 
 #[cfg(target_arch = "wasm32")]
 pub type BoxFuture<'a, T> = futures::future::LocalBoxFuture<'a, T>;
@@ -25,69 +23,9 @@ impl<T: Send> MaybeSend for T {}
 
 type HandlerFn<S> = dyn Send + Sync + Fn(S, Value) -> BoxFuture<'static, Result<Value, RpcError>>;
 
-/// Server is a RPC server that can handle requests by dispatching them to registered
-/// handler functions. It stores a shared state `S` that is passed into each handler.
-pub struct PluginServer {
-    transport: Arc<JsonRpcTransport>,
-    router: Router<Arc<JsonRpcTransport>>,
-}
-
+/// A router for JSON-RPC methods, dispatching calls to registered handler functions
 pub struct Router<S> {
     handlers: HashMap<String, Box<HandlerFn<S>>>,
-}
-
-impl PluginServer {
-    pub fn new(transport: Arc<JsonRpcTransport>) -> Self {
-        Self {
-            transport,
-            router: Router::new(),
-        }
-    }
-
-    pub fn new_with_transport() -> Self {
-        let reader = std::io::BufReader::new(std::io::stdin());
-        let writer = std::io::stdout();
-        let transport = JsonRpcTransport::new(reader, writer);
-        let transport = Arc::new(transport);
-
-        Self {
-            transport,
-            router: Router::new(),
-        }
-    }
-
-    pub fn with_method<P, R, F, Fut>(mut self, name: &str, func: F) -> Self
-    where
-        P: DeserializeOwned + 'static,
-        R: Serialize + 'static,
-        F: Fn(Arc<JsonRpcTransport>, P) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<R, RpcError>> + MaybeSend + 'static,
-    {
-        self.router = self.router.with_method(name, func);
-        self
-    }
-
-    pub fn run(self) {
-        let transport = self.transport.clone();
-
-        let rt = Builder::new_current_thread().enable_time().build().unwrap();
-        let local = tokio::task::LocalSet::new();
-
-        rt.block_on(local.run_until(async move {
-            let _ = transport.process_next_line(Some(&self)).await;
-        }));
-    }
-}
-
-impl RequestHandler<RpcError> for PluginServer {
-    fn handle<'a>(
-        &'a self,
-        method: &'a str,
-        params: Value,
-    ) -> BoxFuture<'a, Result<Value, RpcError>> {
-        let state = self.transport.clone();
-        Box::pin(async move { self.router.handle_with_state(state, method, params).await })
-    }
 }
 
 impl<S: Send + Sync + Clone + 'static> Default for Router<S> {
@@ -104,7 +42,7 @@ impl<S: Send + Sync + Clone + 'static> Router<S> {
     }
 
     /// Register a new RPC method with the router. The method is identified by the
-    /// given name, and the handler function should accept the shared state and
+    /// given name, and the handler function should accept the shared state `S` and
     /// deserialized params.
     ///
     /// Handlers should implement: `async fn handler(state: S, params: P) -> Result<R, RpcError>`
@@ -136,6 +74,9 @@ impl<S: Send + Sync + Clone + 'static> Router<S> {
         self
     }
 
+    /// Handle a request by dispatching to the appropriate registered handler.
+    ///
+    /// If no handler is found for the method, returns `Err(MethodNotFound)`.
     pub async fn handle_with_state(
         &self,
         state: S,
@@ -143,7 +84,6 @@ impl<S: Send + Sync + Clone + 'static> Router<S> {
         params: Value,
     ) -> Result<Value, RpcError> {
         let Some(handler) = self.handlers.get(method) else {
-            warn!("Method not found: {}", method);
             return Err(RpcError::MethodNotFound);
         };
         handler(state, params).await

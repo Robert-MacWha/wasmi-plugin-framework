@@ -32,76 +32,127 @@ pub struct RpcErrorResponse {
     pub error: RpcError,
 }
 
-#[derive(Error, Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+#[derive(Error, Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum RpcError {
     #[error("Parse error")]
     ParseError,
-    #[error("Invalid request")]
-    InvalidRequest,
     #[error("Method not found")]
     MethodNotFound,
     #[error("Invalid params")]
     InvalidParams,
-    #[error("Internal error")]
-    InternalError,
+    /// Custom error with message. Messages are unstable and inconsistent across
+    /// different plugins and versions. They should NEVER be relied upon for
+    /// program logic.
+    ///
+    /// TODO: Consider poisoning equality checks on this variant to prevent
+    /// accidental reliance on error message contents.
     #[error("{0}")]
     Custom(String),
 }
 
-impl RpcError {
-    pub fn code(&self) -> i64 {
-        match self {
-            RpcError::ParseError => -32700,
-            RpcError::InvalidRequest => -32600,
-            RpcError::MethodNotFound => -32601,
-            RpcError::InvalidParams => -32602,
-            RpcError::InternalError => -32603,
-            RpcError::Custom(_) => -32000,
-        }
-    }
-
-    pub fn message(&self) -> String {
-        self.to_string()
-    }
-}
-
-pub fn to_rpc_err<E: std::error::Error>(e: E) -> RpcError {
-    RpcError::Custom(e.to_string())
-}
-
-impl Serialize for RpcError {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+pub trait RpcErrorContext<T> {
+    fn context(self, msg: impl Into<String>) -> Result<T, RpcError>;
+    fn with_context<F, S>(self, f: F) -> Result<T, RpcError>
     where
-        S: serde::Serializer,
-    {
-        use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("RpcError", 2)?;
-        state.serialize_field("code", &self.code())?;
-        state.serialize_field("message", &self.message())?;
-        state.end()
-    }
+        F: FnOnce() -> S,
+        S: Into<String>;
 }
 
-impl<'de> Deserialize<'de> for RpcError {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        struct RpcErrorData {
-            code: i64,
-            message: String,
-        }
+pub trait ToRpcResult<T> {
+    fn rpc_err(self) -> Result<T, RpcError>;
+}
 
-        let data = RpcErrorData::deserialize(deserializer)?;
-
-        Ok(match data.code {
-            -32700 => RpcError::ParseError,
-            -32600 => RpcError::InvalidRequest,
-            -32601 => RpcError::MethodNotFound,
-            -32602 => RpcError::InvalidParams,
-            -32603 => RpcError::InternalError,
-            _ => RpcError::Custom(data.message),
+impl RpcMessage {
+    pub fn request(id: u64, method: String, params: Value) -> Self {
+        RpcMessage::RpcRequest(RpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id,
+            method,
+            params,
         })
+    }
+
+    pub fn response(id: u64, result: Value) -> Self {
+        RpcMessage::RpcResponse(RpcResponse {
+            jsonrpc: "2.0".to_string(),
+            id,
+            result,
+        })
+    }
+
+    pub fn error_response(id: u64, error: RpcError) -> Self {
+        RpcMessage::RpcErrorResponse(RpcErrorResponse {
+            jsonrpc: "2.0".to_string(),
+            id,
+            error,
+        })
+    }
+}
+
+impl RpcError {
+    pub fn custom<S: Into<String>>(msg: S) -> Self {
+        RpcError::Custom(msg.into())
+    }
+}
+
+impl From<RpcErrorResponse> for RpcError {
+    fn from(value: RpcErrorResponse) -> Self {
+        value.error
+    }
+}
+
+impl From<String> for RpcError {
+    fn from(s: String) -> Self {
+        RpcError::Custom(s)
+    }
+}
+
+impl From<&str> for RpcError {
+    fn from(s: &str) -> Self {
+        RpcError::Custom(s.to_string())
+    }
+}
+
+impl From<Box<dyn std::error::Error + Send + Sync>> for RpcError {
+    fn from(e: Box<dyn std::error::Error + Send + Sync>) -> Self {
+        RpcError::Custom(e.to_string())
+    }
+}
+
+impl<T, E: std::fmt::Display> RpcErrorContext<T> for Result<T, E> {
+    fn context(self, msg: impl Into<String>) -> Result<T, RpcError> {
+        self.map_err(|e| RpcError::Custom(format!("{}: {}", msg.into(), e)))
+    }
+
+    fn with_context<F, S>(self, f: F) -> Result<T, RpcError>
+    where
+        F: FnOnce() -> S,
+        S: Into<String>,
+    {
+        self.map_err(|e| RpcError::Custom(format!("{}: {}", f().into(), e)))
+    }
+}
+
+impl<T> RpcErrorContext<T> for Option<T> {
+    fn context(self, msg: impl Into<String>) -> Result<T, RpcError> {
+        self.ok_or_else(|| RpcError::Custom(msg.into()))
+    }
+
+    fn with_context<F, S>(self, f: F) -> Result<T, RpcError>
+    where
+        F: FnOnce() -> S,
+        S: Into<String>,
+    {
+        self.ok_or_else(|| RpcError::Custom(f().into()))
+    }
+}
+
+impl<T, E> ToRpcResult<T> for Result<T, E>
+where
+    E: std::error::Error + Send + Sync + 'static,
+{
+    fn rpc_err(self) -> Result<T, RpcError> {
+        self.map_err(|e| RpcError::from(Box::new(e) as Box<dyn std::error::Error + Send + Sync>))
     }
 }
