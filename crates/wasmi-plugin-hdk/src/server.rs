@@ -1,15 +1,15 @@
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use wasmi_plugin_pdk::{
+    router::{BoxFuture, MaybeSend, Router},
     rpc_message::RpcError,
-    server::{BoxFuture, MaybeSend, Router},
 };
 
-use crate::{host_handler::HostHandler, plugin::PluginId};
+use crate::{host_handler::HostHandler, instance_id::InstanceId};
 
 pub struct HostServer<S: Clone + Send + Sync + 'static> {
     state: S,
-    router: Router<(PluginId, S)>,
+    router: Router<(InstanceId, S)>,
 }
 
 impl<S: Default + Clone + Send + Sync + 'static> Default for HostServer<S> {
@@ -23,6 +23,10 @@ impl<S: Default + Clone + Send + Sync + 'static> Default for HostServer<S> {
 
 impl<S: Clone + Send + Sync + 'static> HostServer<S> {
     pub fn new(state: S) -> Self {
+        std::panic::set_hook(Box::new(|panic_info| {
+            eprintln!("GUEST PANIC: {}", panic_info);
+        }));
+
         Self {
             router: Router::new(),
             state,
@@ -33,7 +37,7 @@ impl<S: Clone + Send + Sync + 'static> HostServer<S> {
     where
         P: DeserializeOwned + 'static,
         R: Serialize + 'static,
-        F: Fn((PluginId, S), P) -> Fut + Send + Sync + 'static,
+        F: Fn((InstanceId, S), P) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<R, RpcError>> + MaybeSend + 'static,
     {
         self.router = self.router.with_method(name, func);
@@ -44,12 +48,12 @@ impl<S: Clone + Send + Sync + 'static> HostServer<S> {
 impl<S: Clone + Send + Sync + 'static> HostHandler for HostServer<S> {
     fn handle<'a>(
         &'a self,
-        plugin: PluginId,
+        instance: InstanceId,
         method: &'a str,
         params: Value,
     ) -> BoxFuture<'a, Result<Value, RpcError>> {
         Box::pin(async move {
-            let state = (plugin, self.state.clone());
+            let state = (instance, self.state.clone());
             self.router.handle_with_state(state, method, params).await
         })
     }

@@ -1,0 +1,45 @@
+[package]
+name = "wasmi-plugin-coordinator"
+version.workspace = true
+rust-version.workspace = true
+description = "Atomics-enabled coordinator for compute web workers"
+authors.workspace = true
+repository.workspace = true
+edition.workspace = true
+readme.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+exclude.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+console_error_panic_hook = "0.1.7"
+futures = { workspace = true }
+serde = { workspace = true }
+serde-wasm-bindgen = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-wasm = { workspace = true }
+wasm-bindgen = { workspace = true }
+wasm-bindgen-futures = { workspace = true }
+wasmer = { workspace = true, features = ["js-default", "js-serializable-module"] }
+wasmi-plugin-coordinator-protocol = { workspace = true }
+wasmi-plugin-wasi = { workspace = true }
+web-sys = { workspace = true, features = ["Worker", "WorkerOptions", "DedicatedWorkerGlobalScope", "WorkerType", "MessageEvent", "ErrorEvent", "Blob", "BlobPropertyBag", "Url", "console", "TextDecoder"] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+
+# Keep function names in release builds
+strip = "none"
+debug = "line-tables-only"
+
+[profile.release.package."*"]
+opt-level = 3

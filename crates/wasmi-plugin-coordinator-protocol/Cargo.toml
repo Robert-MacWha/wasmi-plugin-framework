@@ -1,5 +1,5 @@
 [package]
-name = "wasmi-plugin-rt"
+name = "wasmi-plugin-coordinator-protocol"
 version.workspace = true
 rust-version.workspace = true
 description = "Runtime utilities for wasmi-plugin-framework"
@@ -13,11 +13,6 @@ categories.workspace = true
 exclude.workspace = true
 
 [dependencies]
-web-time = { workspace = true }
-
-[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
-gloo-timers = { workspace = true }
-web-sys = { workspace = true }
-
-[target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dependencies]
-tokio = { workspace = true }
+getrandom = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
