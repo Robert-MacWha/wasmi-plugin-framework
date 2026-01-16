@@ -51,3 +51,20 @@ jobs:
 
     - run: nix-shell --run "make clippy-native"
     - run: nix-shell --run "make clippy-wasm"
+
+  check-artifacts:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install Nix
+      uses: DeterminateSystems/nix-installer-action@v14
+    - name: Magic Nix Cache
+      uses: DeterminateSystems/magic-nix-cache-action@v8
+    - name: Rust Cache
+      uses: Swatinem/rust-cache@v2
+
+    - name: Rebuild Wasm Artifacts
+      run: nix-shell --run "make build-all"
+
+    - name: Ensure Artifacts Match Source
+      run: git diff --exit-code
