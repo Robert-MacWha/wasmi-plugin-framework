@@ -53,10 +53,9 @@ pub enum SpawnError {
 static RUNTIME: OnceLock<WorkerRuntime> = OnceLock::new();
 
 const WORKER_LOADER_JS: &str = include_str!("../../../wasmi-plugin-coordinator/src/worker.js");
-const WORKER_JS_GLUE: &str =
-    include_str!("../../../wasmi-plugin-coordinator/pkg/wasmi_plugin_coordinator.js");
+const WORKER_JS_GLUE: &str = include_str!("../../../wasmi-plugin-coordinator/assets/worker.js");
 const WORKER_WASM_BYTES: &[u8] =
-    include_bytes!("../../../wasmi-plugin-coordinator/pkg/wasmi_plugin_coordinator_bg.wasm");
+    include_bytes!("../../../wasmi-plugin-coordinator/assets/worker.wasm");
 
 unsafe impl Send for InnerWorkerRuntime {}
 unsafe impl Sync for InnerWorkerRuntime {}

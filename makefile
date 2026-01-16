@@ -1,5 +1,6 @@
 # === Configuration ===
 BROWSER     := --firefox
+ASSETS_DIR  := crates/wasmi-plugin-coordinator/assets
 
 .PHONY: help build-plugin build-coordinator build-all bench-wasm
 
@@ -19,6 +20,10 @@ build-coordinator:
 	wasm-opt -O3 --debuginfo \
 		crates/wasmi-plugin-coordinator/pkg/wasmi_plugin_coordinator_bg.wasm \
 		-o crates/wasmi-plugin-coordinator/pkg/wasmi_plugin_coordinator_bg.wasm
+
+	mkdir -p $(ASSETS_DIR)
+	@cp crates/wasmi-plugin-coordinator/pkg/wasmi_plugin_coordinator_bg.wasm $(ASSETS_DIR)/worker.wasm
+	@cp crates/wasmi-plugin-coordinator/pkg/wasmi_plugin_coordinator.js $(ASSETS_DIR)/worker.js
 
 build-all: build-plugin build-coordinator
 
